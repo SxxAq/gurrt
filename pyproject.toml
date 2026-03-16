@@ -34,7 +34,7 @@ dependencies = [
     "platformdirs>=4.5.1",
     "typer>=0.21.1",
     "opencv-python-headless>=4.13.0.92",
-]   
+]
 [project.optional-dependencies]
 cuda = [
     "torch",
@@ -68,4 +68,4 @@ dev = [
 
 [project.scripts]
 gurrt = "gurrt.cli.main:app"
-
+gurrt-gui = "gurrt.app.gurrt_gui:main"
