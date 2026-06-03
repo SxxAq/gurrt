@@ -38,8 +38,8 @@ def audio_to_text(audio_path, model) -> str:
 def chunk_text(text):
         
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size = 100,
-        chunk_overlap = 20
+        chunk_size = 512,
+        chunk_overlap = 64
     )
     chunked_text = text_splitter.split_text(text=text)
     return chunked_text
@@ -71,12 +71,12 @@ def generate_captions_in_batches(batch_of_frames,
         clip_embeddings = clip_outputs / clip_outputs.norm(p=2, dim=-1, keepdim=True)
         blip_output_ids = blip_model.generate(**blip_inputs,
                                         # max_length = 300, # run on 6gb vram
-                                        # min_length = 100,
+                                        min_length = 15,
                                         # no_repeat_ngram_size=3,
                                         # repetition_penalty=1.5,
                                         # early_stopping=True,
                                         # do_sample=False,
-                                        # num_beams = 3,
+                                        num_beams = 3,
                                         )
         captions = blip_processor.batch_decode(blip_output_ids, skip_special_tokens=True)
 
@@ -181,8 +181,9 @@ def generate_caption(frame,buffer, model: str):
 
 def rerank(query: str,
            results,
-           MODEL_DIR:str,
-           device,
+        #    MODEL_DIR:str,
+        #    device,
+           reranker_model,
            top_k: int = 10) -> Dict[str, Any]:
     """
     Performs 'Rank CoT' retrieval:
@@ -190,7 +191,7 @@ def rerank(query: str,
     2. Reranks them using the CrossEncoder.
     3. Returns the top_k most relevant results.
     """
-    reranker_model = CrossEncoder(f"{MODEL_DIR}/reranker_model", device=device) 
+    # reranker_model = CrossEncoder(f"{MODEL_DIR}/reranker_model", device=device) 
     if not results['documents'][0]:
         return results
     captions = []
@@ -226,8 +227,9 @@ def rerank(query: str,
     
 def rerank_docs(query: str,
                 results,
-                MODEL_DIR: str,
-                device,
+                # MODEL_DIR: str,
+                # device,
+                reranker_model,
                 top_k: int = 10) -> Dict[str, Any]:
     """
     Performs 'Rank CoT' retrieval:
@@ -235,7 +237,7 @@ def rerank_docs(query: str,
     2. Reranks them using the CrossEncoder.
     3. Returns the top_k most relevant results.
     """
-    reranker_model = CrossEncoder(f"{MODEL_DIR}/reranker_model", device=device)
+    # reranker_model = CrossEncoder(f"{MODEL_DIR}/reranker_model", device=device)
     if not results['documents'][0]:
         return results
 
@@ -272,53 +274,57 @@ def uniform_frame_sampling(path: Path,
     cap= cv2.VideoCapture(path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    frame_no = 0
+    
+    frame_idx = range(0, total_frames, int(fps))
+    # frame_no = 0
     embeddings = []
     metadatas = []
     ids = []
     # buffer = BytesIO()
-    with tqdm(total = total_frames, desc="\033[1;32mProcessing frames...\033[0m") as pbar: 
-        while cap.isOpened():
+    with tqdm(total = len(frame_idx), desc="\033[1;32mProcessing frames...\033[0m") as pbar: 
+        for frame_no in frame_idx:
+        # while cap.isOpened():
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_no)
             ret, frame = cap.read()
             if not ret:
-                break
-            if frame_no % int(fps) == 0:
-                timestamp_sec = cap.get(cv2.CAP_PROP_POS_MSEC) 
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                image = Image.fromarray(frame)
-                inputs = clip_processor(images = image, return_tensors = 'pt').to(device)
-                # caption=generate_caption(image,buffer)
-                # print(caption)
-                blip_input = blip_processor(images = image,
-                                            text="Describe the scene in a factual, objective manner.",
-                                            return_tensors = 'pt').to(device)
-                with torch.no_grad():
-                    outputs = clip_model.get_image_features(inputs.pixel_values)
-                    blip_outputs = blip_model.generate(**blip_input,
-                                                    #    max_length = 60,
-                                                    #    min_length = 20,
-                                                    #    no_repeat_ngram_size=2,
-                                                    #    num_beams = 5,
-                                                       )
-                
-                caption = blip_processor.decode(blip_outputs[0], skip_special_tokens=True)
-                image_embedding = outputs.pooler_output
-                image_embedding = image_embedding / image_embedding.norm(dim = -1, keepdim= True)
-                image_embedding = image_embedding.squeeze(0).cpu().numpy().tolist()
-                frame_id = f"{path}:{timestamp_sec}"
-                
-                ids.append(frame_id)
-                embeddings.append(image_embedding)
+                continue
+            # if frame_no % int(fps) == 0:
+            timestamp_sec = cap.get(cv2.CAP_PROP_POS_MSEC) 
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(frame)
+            inputs = clip_processor(images = image, return_tensors = 'pt').to(device)
+            # caption=generate_caption(image,buffer)
+            # print(caption)
+            blip_input = blip_processor(images = image,
+                                        text="Describe the scene in a factual, objective manner.",
+                                        return_tensors = 'pt').to(device)
+            with torch.no_grad():
+                outputs = clip_model.get_image_features(inputs.pixel_values)
+                blip_outputs = blip_model.generate(**blip_input,
+                                                #    max_length = 60,
+                                                   min_length = 15,
+                                                #    no_repeat_ngram_size=2,
+                                                   num_beams = 3,
+                                                    )
+            
+            caption = blip_processor.decode(blip_outputs[0], skip_special_tokens=True)
+            image_embedding = outputs.pooler_output
+            image_embedding = image_embedding / image_embedding.norm(dim = -1, keepdim= True)
+            image_embedding = image_embedding.squeeze(0).cpu().numpy().tolist()
+            frame_id = f"{path}:{timestamp_sec}"
+            
+            ids.append(frame_id)
+            embeddings.append(image_embedding)
 
-                metadatas.append({
-                    "frame_idx": frame_no,
-                    "caption": caption,
-                    "timestamp_ms": timestamp_sec,
-                    "fps": fps,
-                    "source_path": path
-                })
-                
-            frame_no +=1
+            metadatas.append({
+                "frame_idx": frame_no,
+                "caption": caption,
+                "timestamp_ms": timestamp_sec,
+                "fps": fps,
+                "source_path": str(path)
+            })
+            
+            # frame_no +=1
             pbar.update(1)
     return embeddings, metadatas, ids
 
@@ -330,43 +336,48 @@ def uniform_frame_sampling_ollama(video_path: Path,
     cap= cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    frame_no = 0
+    
+    frames_idx = range(0, total_frames, int(fps))
+    
+    # frame_no = 0
     embeddings = []
     metadatas = []
     ids = []
     
-    with tqdm(total = total_frames, desc="\033[1;32mProcessing frames...\033[0m") as pbar: 
-        while cap.isOpened():
+    with tqdm(total = len(frames_idx), desc="\033[1;32mProcessing frames...\033[0m") as pbar: 
+        for frame_no in frames_idx:
+        # while cap.isOpened():
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_no)
             ret, frame = cap.read()
             if not ret:
-                break
-            if frame_no % int(fps) == 0:
-                timestamp_sec = cap.get(cv2.CAP_PROP_POS_MSEC) 
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                image = Image.fromarray(frame)
-                inputs = clip_processor(images = image, return_tensors = 'pt').to(device)
-                buffer = BytesIO()
-                caption=generate_caption(image,buffer, model_name)
-                
-                with torch.no_grad():
-                    outputs = clip_model.get_image_features(inputs.pixel_values)
-                image_embedding = outputs.pooler_output
-                image_embedding = image_embedding / image_embedding.norm(dim = -1, keepdim= True)
-                image_embedding = image_embedding.squeeze(0).cpu().numpy().tolist()
-                frame_id = f"{video_path}:{timestamp_sec}"
-                
-                ids.append(frame_id)
-                embeddings.append(image_embedding)
+                continue
+            # if frame_no % int(fps) == 0:
+            timestamp_sec = cap.get(cv2.CAP_PROP_POS_MSEC) 
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(frame)
+            inputs = clip_processor(images = image, return_tensors = 'pt').to(device)
+            buffer = BytesIO()
+            caption=generate_caption(image,buffer, model_name)
+            
+            with torch.no_grad():
+                outputs = clip_model.get_image_features(inputs.pixel_values)
+            image_embedding = outputs.pooler_output
+            image_embedding = image_embedding / image_embedding.norm(dim = -1, keepdim= True)
+            image_embedding = image_embedding.squeeze(0).cpu().numpy().tolist()
+            frame_id = f"{video_path}:{timestamp_sec}"
+            
+            ids.append(frame_id)
+            embeddings.append(image_embedding)
 
-                metadatas.append({
-                    "frame_idx": frame_no,
-                    "caption": caption,
-                    "timestamp_ms": timestamp_sec,
-                    "fps": fps,
-                    "source_path": video_path
-                })
-                
-            frame_no +=1
+            metadatas.append({
+                "frame_idx": frame_no,
+                "caption": caption,
+                "timestamp_ms": timestamp_sec,
+                "fps": fps,
+                "source_path": str(video_path)
+            })
+            
+            # frame_no +=1
             pbar.update(1)
     return embeddings, metadatas, ids
 def detect_scenes(video_path,
@@ -413,7 +424,7 @@ def detect_scenes(video_path,
                     "frame_idx": f"frame_no_{i}_{labels}",
                     "caption": caption,
                     "timestamp_ms": timestamp_sec,
-                    "source_path": video_path
+                    "source_path": str(video_path)
                 })
             pbar.update(1)
                

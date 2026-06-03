@@ -10,6 +10,9 @@ VIDEO:
 AUDIO:
 {context_audio}
 
+below is some previous chat context given if the user wants to reeally ask something from teh previous conversation
+{previous_chat}
+
 QUESTION:
 {query}
 

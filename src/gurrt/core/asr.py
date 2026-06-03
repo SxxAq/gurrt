@@ -28,7 +28,7 @@ def audio_extract_chunk_and_embed(
     ]
     
     metadatas = [
-        {"video_path": video_path, "type": "audio_transcript"}
+        {"video_path": str(video_path), "type": "audio_transcript"}
         for _ in range(len(chunked_text))
     ]
     return chunked_text, metadatas, text_features, ids

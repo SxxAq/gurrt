@@ -16,8 +16,11 @@ class VideoRag:
         self.llm = LLMService(self.settings)
         self.device = self.models.device
         self.clip_model, self.clip_processor= self.models.get_clip()
+        
+        self.reranker = self.models.get_reranker()
         self.search = SearchService(clip_model=self.clip_model,
                                     clip_processor=self.clip_processor,
+                                    reranker= self.reranker,
                                     settings= self.settings)
         
     def index_video(self, video_path:Path):
