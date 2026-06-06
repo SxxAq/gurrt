@@ -1,16 +1,19 @@
 from pathlib import Path
+import numpy as np
 from typing import Dict, Any
 from ollama import chat
-import moviepy.editor as mp
+# import moviepy.editor as mp
 from sentence_transformers import CrossEncoder
 import torch
 import cv2
 from io import BytesIO
 from tqdm import tqdm
 from PIL import Image
-import imagehash
-from scenedetect import open_video, SceneManager
-from scenedetect.detectors import ContentDetector
+import subprocess
+
+# import imagehash
+# from scenedetect import open_video, SceneManager
+# from scenedetect.detectors import ContentDetector
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from gurrt.config.config import Settings
@@ -18,32 +21,45 @@ from gurrt.config.config import Settings
 
 
 
+# def audio_extraction(path: Path):
+#     settings = Settings()
+#     audio_file = settings.AUDIO_PATH
+#     video = mp.VideoFileClip(path)
+#     audio = video.audio
+#     audio.write_audiofile(audio_file)
+    
+#     audio.close()
+#     video.close()
+#     return audio_file
+
 def audio_extraction(path: Path):
     settings = Settings()
     audio_file = settings.AUDIO_PATH
-    video = mp.VideoFileClip(path)
-    audio = video.audio
-    audio.write_audiofile(audio_file)
-    
-    audio.close()
-    video.close()
+    subprocess.run([
+        "ffmpeg", "-y", "-i", str(path),
+        "-vn", "-acodec", "pcm_s16le",
+        "-ar", "16000", "-ac", "1",
+        str(audio_file)
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     return audio_file
 
-def audio_to_text(audio_path, model) -> str:
-    segments, info = model.transcribe(audio_path, beam_size=5)
+def audio_to_text(audio_path, model, beam_size : int = 5) -> str:
+    segments, info = model.transcribe(audio_path, beam_size= beam_size, vad_filter = True)
     text = ""
-    for segment in segments:
-        text+=segment.text
+    # for segment in segments:
+    #     text += segments.text
+    # return text
+    text = "".join(segment.text for segment in segments)
+    print(text)
     return text
-
 def chunk_text(text):
-        
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size = 300,
         chunk_overlap = 40
     )
     chunked_text = text_splitter.split_text(text=text)
     return chunked_text
+
 def scene_split(video_path):
     print("--- Detecting shot boundaries with PySceneDetect ---")
     video = open_video(video_path)
@@ -461,7 +477,7 @@ def detect_scenes(video_path,
     return embeddings, metadatas, ids
 
 
-def temporal_persistence_filter(video_path,
+def temporal_persistence_filter(video_path: Path,
                                 fps_selected: int = 2,
                                 hash_threshold : int = 12,
                                 persistence_window_sec : float = 5.0,
@@ -515,59 +531,69 @@ def temporal_persistence_filter(video_path,
     cap = cv2.VideoCapture(video_path)
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    req_fps = max(1, fps// fps_selected)
-    frame_idx = range(0, total_frames, req_fps)
-    
-    hashed_frames = [] 
-    with tqdm(total = len(frame_idx), desc = "\033[1;32mHashing frames...\033[0m") as pbar:
-        for frame_no in frame_idx:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_no)
-            ret, frame = cap.read()
-            if not ret:
-                continue
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            timestamp = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
-            image = Image.fromarray(frame)
-            hash_score = imagehash.dhash(image= image)
-            
-            hashed_frames.append((frame_no, timestamp, hash_score))
-            pbar.update(1)
+    req_fps = max(1, fps // fps_selected)
 
-    cap.release()
-    
     STABLE, CANDIDATE = "STABLE", "CANDIDATE"
     state = STABLE
     ref_hash = None
-    candidate = None
+    candidate = None          # (frame_no, timestamp, hash_bits, raw_bgr)
     window_start = None
     last_selected_sec = None
     window_distances = []
-    selected_frames = []
-    with tqdm(total=len(hashed_frames), desc="\033[1;32mSelecting frames...\033[0m") as pbar:
-        for frame_no, timestamp, current_hash in hashed_frames:
+    selected_frames = []      # (timestamp, raw_bgr)
+
+    frame_no = 0
+    n_sampled = max(1, total_frames // req_fps)
+
+    with tqdm(total=n_sampled, desc="\033[1;32mTemporal Persistence Filtering Frames...\033[0m") as pbar:
+        while frame_no < total_frames:
+            is_sampled = (frame_no % req_fps == 0)
+
+            if is_sampled:
+                ret, frame = cap.read()
+            else:
+                ret = cap.grab()
+
+            
+
+            # advance counter after read/grab, before any logic
+            frame_no += 1
+
+            if not ret or not is_sampled:
+                continue
+
+            timestamp = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            small = cv2.resize(gray, (9, 8), interpolation=cv2.INTER_AREA)
+            current_hash = (small[:, 1:] > small[:, :-1]).flatten()
+
             if ref_hash is None:
                 ref_hash = current_hash
                 last_selected_sec = timestamp
+                pbar.update(1)
                 continue
-            
+
             if timestamp - last_selected_sec > max_interval_sec:
-                print("Max Interval Passed  with no frame selected so selecting frame by default")
-                selected_frames.append((frame_no, timestamp))
+                selected_frames.append((timestamp, frame.copy()))
                 ref_hash = current_hash
                 last_selected_sec = timestamp
                 state = STABLE
                 window_distances = []
                 candidate = None
+                pbar.update(1)
                 continue
-            
-            distance = current_hash - ref_hash
-            
+
+            distance = int(np.count_nonzero(current_hash ^ ref_hash))
+
             if state == STABLE:
                 if distance > hash_threshold:
                     state = CANDIDATE
-                    candidate = (frame_no, timestamp, current_hash)
+                    # store frame.copy() so no re-read pass is needed
+                    candidate = (frame_no - 1, timestamp, current_hash, frame.copy())
                     window_start = timestamp
                     window_distances = [distance]
+
             elif state == CANDIDATE:
                 window_distances.append(distance)
                 elapsed_time = timestamp - window_start
@@ -575,30 +601,30 @@ def temporal_persistence_filter(video_path,
                     ratio = sum(d > hash_threshold for d in window_distances) / len(window_distances)
                     time_ok = candidate[1] - last_selected_sec >= min_interval_sec
                     if ratio > vote_ratio and time_ok:
-                        selected_frames.append((candidate[0], candidate[1]))
-                        ref_hash = candidate[2]
-                        last_selected_sec = candidate[1]
-                        
+                        _, cand_ts, cand_hash, cand_raw = candidate
+                        selected_frames.append((cand_ts, cand_raw))
+                        ref_hash = cand_hash
+                        last_selected_sec = cand_ts
                     state = STABLE
                     candidate = None
                     window_distances = []
+
             pbar.update(1)
-    timestamp_sec = [f[1] for f in selected_frames]
-    frame_number = [f[0] for f in selected_frames]
-    ids = [f"{video_path}:{t}:Persistence_Filter" for t in timestamp_sec]
-    frame_PIL = []
-    cap = cv2.VideoCapture(video_path)
-    for idx in frame_number:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        
-        ret, frame = cap.read()
-        if not ret:
-            continue
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        image = Image.fromarray(frame)
-        frame_PIL.append(image)
+
     cap.release()
+
+    timestamp_sec = [f[0] for f in selected_frames]
+    ids = [f"{video_path}:{t}:Persistence_Filter" for t in timestamp_sec]
+    frame_PIL = [
+        Image.fromarray(cv2.cvtColor(raw, cv2.COLOR_BGR2RGB))
+        for _, raw in selected_frames
+    ]
+    print(f"\033[1;32mTotal sampled frames hashed: {len(selected_frames)}\033[0m")
+    print(f"\033[1;32mTotal frames : {total_frames}\033[0m")
     return frame_PIL, timestamp_sec, ids, fps
+
+
+
 # def download_video_audio(url):
 #     try:
 #         download_dir = "./outputs"  # Change to your existing directory

@@ -128,13 +128,16 @@ def index(video_path):
         )
     )
     rag = VideoRag(reset=True)
+    
     video_time_start = time.time()
     rag.index_video(video_path=video_path)
     video_time_end = time.time()
+    
     audio_time_start = time.time()
     with console.status("[info]Processing audio transcription...[/info]", spinner="dots"):
         rag.index_audio(video_path=video_path)
     audio_time_end = time.time()
+    
     console.print(Panel(
             "[success]✔ Video indexed successfully![/success]"
             "[success]You may start asking your queries![/success]",
