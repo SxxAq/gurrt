@@ -10,6 +10,7 @@ from io import BytesIO
 from tqdm import tqdm
 from PIL import Image
 import subprocess
+import imageio_ffmpeg  
 
 # import imagehash
 # from scenedetect import open_video, SceneManager
@@ -35,8 +36,9 @@ from gurrt.config.config import Settings
 def audio_extraction(path: Path):
     settings = Settings()
     audio_file = settings.AUDIO_PATH
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
     subprocess.run([
-        "ffmpeg", "-y", "-i", str(path),
+        ffmpeg_exe, "-y", "-i", str(path),
         "-vn", "-acodec", "pcm_s16le",
         "-ar", "16000", "-ac", "1",
         str(audio_file)
