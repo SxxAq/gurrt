@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
@@ -127,16 +128,23 @@ def index(video_path):
         )
     )
     rag = VideoRag(reset=True)
-    rag.index_video(video_path=video_path)
     
+    video_time_start = time.time()
+    rag.index_video(video_path=video_path)
+    video_time_end = time.time()
+    
+    audio_time_start = time.time()
     with console.status("[info]Processing audio transcription...[/info]", spinner="dots"):
         rag.index_audio(video_path=video_path)
+    audio_time_end = time.time()
     
     console.print(Panel(
             "[success]✔ Video indexed successfully![/success]"
             "[success]You may start asking your queries![/success]",
             border_style="green"
         ))
+    print(f"Video Indexing Time: {video_time_end - video_time_start:.2f} seconds")
+    print(f"Audio Indexing Time: {audio_time_end - audio_time_start:.2f} seconds")
 
 @app.command()
 def index_ollama(video_path, model_name):

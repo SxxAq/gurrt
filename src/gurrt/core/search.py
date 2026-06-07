@@ -4,14 +4,16 @@ from gurrt.core.vectordb import VectorDB
 import torch
 
 class SearchService:
-    def __init__(self, clip_model, clip_processor, settings: Settings):
+    def __init__(self, clip_model, clip_processor, reranker, vectordb: VectorDB, settings: Settings):
         
         self.model = clip_model
         self.processor = clip_processor
+        self.reranker = reranker
         
         self.settings = settings
         self.cache_dir = self.settings.MODEL_CACHE_DIR
-        self.db = VectorDB(str(self.settings.CHROMA_DB_PATH))
+        # self.db = VectorDB(str(self.settings.CHROMA_DB_PATH))
+        self.db = vectordb
         
     def _embed_text(self, query,
                     device):
@@ -45,14 +47,16 @@ class SearchService:
         
         results_reranked = rerank(query,
                                   results, 
-                                  str(self.cache_dir),
-                                  device,
-                                  n_results)
+                                #   str(self.cache_dir),
+                                #   device,
+                                self.reranker,
+                                n_results)
         results_reranked_audio = rerank_docs(query,
                                              results_audio,
-                                             str(self.cache_dir),
-                                             device,
-                                             n_results)
+                                            #  str(self.cache_dir),
+                                            #  device,
+                                            self.reranker,
+                                            n_results)
         
         captions_list = caption_frame_collection(results_reranked)
         asr_list = results_reranked_audio["documents"][0]

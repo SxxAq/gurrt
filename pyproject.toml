@@ -1,6 +1,6 @@
 [project]
 name = "gurrt"
-version = "1.0.4"
+version = "1.0.5"
 description = "An Intelligent Open-Source Video Understanding System A different path from traditional Large Video Language Models (LVLMs). Built for modularity, openness, and real-world usability."
 authors = [
     {name="Mohammad Owais", email = "owaismohammad2515@gmail.com"},
@@ -34,7 +34,9 @@ dependencies = [
     "platformdirs>=4.5.1",
     "typer>=0.21.1",
     "opencv-python-headless>=4.13.0.92",
-]   
+    "imagehash>=4.3.2",
+    "imageio-ffmpeg>=0.6.0",
+]
 [project.optional-dependencies]
 cuda = [
     "torch",
@@ -68,4 +70,4 @@ dev = [
 
 [project.scripts]
 gurrt = "gurrt.cli.main:app"
-
+gurrt-gui = "gurrt.app.gurrt_gui:main"

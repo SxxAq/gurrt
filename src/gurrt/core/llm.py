@@ -21,45 +21,63 @@ class LLMService:
         context_caption = "\n".join(caption_list)
         asr_text = "\n".join(asr_list)
         
-        self.client_memory.add(
-            content = context_caption,
-            container_tags = ["Frame_Captions"],
-            metadata = {
-                "note_id": "Retrieved Frames"
-            }
-        )
-        self.client_memory.add(
-            content = asr_text,
-            container_tags = ["Audio_Captions"],
-            metadata = {
-                "note_id": "Retrieved Audio"
-            }
-        )
-        context_frame = self.client_memory.search.documents(
+        # self.client_memory.add(
+        #     content = context_caption,
+        #     container_tags = ["Frame_Captions"],
+        #     metadata = {
+        #         "note_id": "Retrieved Frames"
+        #     }
+        # )
+        # self.client_memory.add(
+        #     content = asr_text,
+        #     container_tags = ["Audio_Captions"],
+        #     metadata = {
+        #         "note_id": "Retrieved Audio"
+        #     }
+        # )
+        # context_frame = self.client_memory.search.documents(
+        #     q= query,
+        #     container_tags = ["Frame_Captions"],
+        #     limit = 9
+        # )
+        # context_audio = self.client_memory.search.documents(
+        #     q= query,
+        #     container_tags = ["Audio_Captions"],
+        #     limit = 9
+        # )
+        chat_context = self.client_memory.search.documents(
             q= query,
-            container_tags = ["Frame_Captions"],
-            limit = 9
-        )
-        context_audio = self.client_memory.search.documents(
-            q= query,
-            container_tags = ["Audio_Captions"],
-            limit = 9
+            container_tags = ["Previous_Chat"],
+            limit = 3
         )
         parser = StrOutputParser()
         prompt = PromptTemplate(
             template = LLM_QUERY_PROMPT,
-            input_variables = ["context_frame", "context_audio","query"]
+            input_variables = ["context_frame", "context_audio", "previous_chat","query"]
         )
         chain = prompt | self.llm | parser
         result = await chain.ainvoke({
-            "context_frame": context_frame,
-            "context_audio": context_audio,
+            "context_frame": context_caption,
+            "context_audio": asr_text,
+            "previous_chat": chat_context,
             "query" : query
         })
+        
+        context = f"{query}\n\n\n{result}"
+        self.client_memory.add(
+            content = context,
+            container_tags = ["Previous_Chat"],
+            metadata = {
+                "note_id": "Retrieved Chat"
+            }
+        )
         return result
 
     def delete(self) -> dict:
-        frames_deleted = self.client_memory.documents.delete_bulk(container_tags=["Frame_Captions"])
-        audio_deleted = self.client_memory.documents.delete_bulk(container_tags=["Audio_Captions"])
-        return {"frames_deleted": frames_deleted,
-                "audio_deleted": audio_deleted}
+        # frames_deleted = self.client_memory.documents.delete_bulk(container_tags=["Frame_Captions"])
+        # audio_deleted = self.client_memory.documents.delete_bulk(container_tags=["Audio_Captions"])
+        # return {"frames_deleted": frames_deleted,
+        #         "audio_deleted": audio_deleted}
+        chat_deleted = self.client_memory.documents.delete_bulk(container_tags=["Previous_Chat"])
+        return {"chat_deleted": chat_deleted}
+

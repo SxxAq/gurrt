@@ -4,12 +4,13 @@ from sentence_transformers import CrossEncoder
 from faster_whisper import WhisperModel
 
 from gurrt.config.config import Settings
+from huggingface_hub import snapshot_download
 
 class ModelManager:
     def __init__(self, settings: Settings):
         
         self.device = "cuda" if torch.cuda.is_available() and torch.cuda.mem_get_info(0)[1]>= 4* 10**9 else "cpu"
-        print(self.device)
+        print(f"\033[1;32mRunning on {(self.device).upper()}\033[0m")
         self.settings = settings
         self.cache = self.settings.MODEL_CACHE_DIR
         
@@ -59,11 +60,14 @@ class ModelManager:
         self._free_gpu()
         
     def get_whisper(self):
+        path = self.cache / "whisper_model"
         if self.device == "cuda":
             compute_type = "int8_float16"
         else:
             compute_type = "int8"
-        self._whisper = WhisperModel(str(self.settings.WHISPER_MODEL),
+        self._whisper = WhisperModel(
+                                    #  str(self.settings.WHISPER_MODEL),
+                                     str(path),
                                      device= self.device,
                                      compute_type=compute_type)
         return self._whisper
@@ -88,7 +92,7 @@ class ModelManager:
         self._reranker = None
         self._free_gpu()
         
-def download_models(cache_dir):
+def download_models(cache_dir, model_name : str = "small"):
     print("Downloading CLIP....")
     clip = CLIPModel.from_pretrained("openai/clip-vit-base-patch32", use_safetensors = True)
     proc = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
@@ -100,6 +104,42 @@ def download_models(cache_dir):
     blip_proc = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
     blip.save_pretrained(cache_dir / "blip_model")
     blip_proc.save_pretrained(cache_dir / "blip_model")
+    
     print("Downloading Reranker....")
     reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
     reranker.save(str(cache_dir / "reranker_model"))
+    
+    print("Downloading Whisper....")
+    snapshot_download(
+        repo_id=f"Systran/faster-whisper-{model_name}",
+        local_dir=str(cache_dir / "whisper_model")
+    )
+    
+    
+    
+    
+def download_clip(cache_dir):
+    print("Downloading CLIP....")
+    clip = CLIPModel.from_pretrained("openai/clip-vit-base-patch32", use_safetensors = True)
+    proc = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    clip.save_pretrained(cache_dir / "clip_model")
+    proc.save_pretrained(cache_dir / "clip_model")
+
+def download_blip(cache_dir):
+    print("Downloading BLIP....")
+    blip = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base", use_safetensors= True)
+    blip_proc = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+    blip.save_pretrained(cache_dir / "blip_model")
+    blip_proc.save_pretrained(cache_dir / "blip_model")
+
+def download_reranker(cache_dir):
+    print("Downloading Reranker....")
+    reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    reranker.save(str(cache_dir / "reranker_model"))
+
+def download_whisper(cache_dir, model_name="small"):
+    print("Downloading Whisper....")
+    snapshot_download(
+        repo_id=f"Systran/faster-whisper-{model_name}",
+        local_dir=str(cache_dir / "whisper_model")
+    )
