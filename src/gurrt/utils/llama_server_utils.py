@@ -1,11 +1,14 @@
 import io
 import base64
 import asyncio
+import time
 import aiohttp
 from typing import List, Dict, Any
 import requests
 import json
 from tqdm import tqdm
+from gurrt.utils.utils import temporal_persistence_filter
+
 
 def _convert_pil_to_base64(pil_img) -> str:
     """Converts a PIL image object to a base64 string completely in memory."""
@@ -139,3 +142,19 @@ def get_batch_embeddings(self, captions: List[str]) -> List[List[float]]:
         print(f"❌ Failed to extract vector representation array: {e}")
         # Fallback tracking array: generate zero-filled shapes matching Gemma's 768 size limit
         return [[0.0] * 768 for _ in range(len(captions))]
+    
+def wait_for_server():
+    print("⏳ Awaiting background system engine initialization...")
+    for attempt in range(40):
+        try:
+            if requests.get("http://localhost:8080/health", timeout=1).status_code == 200:
+                print("✅ Captioning engine is online!")
+                return True
+        except requests.exceptions.RequestException:
+            pass
+        time.sleep(1.5)  # Restored sleep so you don't spam the CPU
+    return False    
+
+def process_video(video_path):
+    print("🎬 Starting video temporal persistence filtering...")
+    return temporal_persistence_filter(video_path=video_path)

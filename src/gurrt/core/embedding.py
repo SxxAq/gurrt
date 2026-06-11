@@ -54,12 +54,16 @@ def scene_detection_frame_sampling(
     return embeddings_list, metadatas, ids
 
 def scene_detection_frame_sampling_llama_server(
-    video_path: Path,
+    frame_PIL,
+    timestamps_list,
+    ids,
+    fps,
+    video_path,
     clip_model,
     clip_processor,
     device
 ):
-    frame_PIL, timestamps_list, ids, fps = temporal_persistence_filter(video_path=video_path)
+    #frame_PIL, timestamps_list, ids, fps = temporal_persistence_filter(video_path=video_path)
 
     print(f"🎬 Dispatched {len(frame_PIL)} filtered frames to local llama-server...")
     captioned_nodes = []
