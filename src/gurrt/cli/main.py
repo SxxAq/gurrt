@@ -22,6 +22,7 @@ from platformdirs import user_config_dir
 import json
 import asyncio
 from gurrt.core.pipeline import VideoRag
+from gurrt.config.config import model, mmproj_model
 
 from rich.theme import Theme
 from rich.console import Console
@@ -105,8 +106,8 @@ def init_llama():
     SERVER_BIN = BIN_DIR / ("llama-server.exe" if is_windows else "llama-server")
     MODELS_DIR = PROJECT_ROOT / "models"
     
-    llm_path = MODELS_DIR / "gemma-3-4b-it-Q4_0.gguf"
-    clip_path = MODELS_DIR / "mmproj-model-f16.gguf"
+    llm_path = MODELS_DIR / model
+    clip_path = MODELS_DIR / mmproj_model
     #embed_path = MODELS_DIR / "embeddinggemma-300M-bf16.gguf"
     
     if not llm_path.exists() or not clip_path.exists() :

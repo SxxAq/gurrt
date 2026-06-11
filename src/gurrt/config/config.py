@@ -29,3 +29,8 @@ class Settings:
         self.AUDIO_PATH = home / "output.wav"
 
         self.LLAMA_RELEASE_URL = "https://github.com/ggml-org/llama.cpp/releases/download/b4600/llama-b4600-bin-win-cuda-cu12.6-x64.zip"
+
+#model="Qwen2.5-VL-3B-Instruct-Q4_1.gguf"
+#dusra_model = "mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf"
+model="gemma-3-4b-it-Q4_0.gguf"
+mmproj_model = "mmproj-model-f16.gguf"

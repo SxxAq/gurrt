@@ -6,6 +6,7 @@ from gurrt.core.llm import LLMService
 from gurrt.core.models import ModelManager
 from gurrt.core.search import SearchService
 from gurrt.core.vectordb import VectorDB
+from gurrt.config.config import model, mmproj_model
 import subprocess
 import requests
 import time
@@ -83,8 +84,8 @@ class VideoRag:
                     print("\033[1;32mSupermemory Not Cleared\033[0m")
             except:
                 print("\033[1;32mSupermemory Initialized✅\033[0m")
-        llm_path = models_dir / "gemma-3-4b-it-Q4_0.gguf"
-        clip_path = models_dir / "mmproj-model-f16.gguf"
+        llm_path = models_dir / model
+        clip_path = models_dir / mmproj_model
         embed_path = models_dir / "embeddinggemma-300M-bf16.gguf"        
         cmd_caption_server = [
             str(server_bin),
@@ -92,8 +93,11 @@ class VideoRag:
             "--mmproj", str(clip_path),
             "-ngl", "99",
             "--parallel", "4",
-            "-c", "4096",
-            "--port", "8080"
+            "-c", "8192",
+            "--port", "8080",
+            "-n","120"
+            #"--flash-attn"
+
         ]
 
         # cmd_embedding_server = [
