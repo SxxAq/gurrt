@@ -17,6 +17,7 @@ from gurrt.core.models import ModelManager
 from gurrt.core.search import SearchService
 from gurrt.core.vectordb import VectorDB
 from gurrt.config.config import LlamaServerManager
+from gurrt.cli import ui
 import subprocess
 import requests
 import time
@@ -34,13 +35,9 @@ class VideoRag:
     def index_video(self, video_path:Path, flag:bool):
         if self.reset:
             try:
-                w = self.llm.delete()
-                if w:
-                    print("\033[1;32mSupermemory Cleared\033[0m")
-                else:
-                    print("\033[1;32mSupermemory Not Cleared\033[0m")
-            except:
-                print("\033[1;32mSupermemory Initialized✅\033[0m")
+                self.llm.delete()
+            except Exception:
+                pass
         embeddings, metadatas, ids = frame_detection(video_path= video_path,
                                                     clip_model=self.clip_model,
                                                     clip_processor=self.clip_processor,
@@ -55,13 +52,9 @@ class VideoRag:
     def index_video_blip(self, video_path:Path):
         if self.reset:
             try:
-                w = self.llm.delete()
-                if w:
-                    print("\033[1;32mSupermemory Cleared\033[0m")
-                else:
-                    print("\033[1;32mSupermemory Not Cleared\033[0m")
-            except:
-                print("\033[1;32mSupermemory Initialized✅\033[0m")
+                self.llm.delete()
+            except Exception:
+                pass
         embeddings, metadatas, ids = frame_detection_blip(video_path= video_path,
                                                     clip_model=self.clip_model,
                                                     clip_processor=self.clip_processor,
@@ -75,13 +68,9 @@ class VideoRag:
     def index_video_ollama(self, video_path:Path, model_name: str):
         if self.reset:
             try:
-                w = self.llm.delete()
-                if w:
-                    print("\033[1;32mSupermemory Cleared\033[0m")
-                else:
-                    print("\033[1;32mSupermemory Not Cleared\033[0m")
-            except:
-                print("\033[1;32mSupermemory Initialized✅\033[0m")
+                self.llm.delete()
+            except Exception:
+                pass
         embeddings, metadatas, ids = frame_detection_ollama(
                                                             video_path= video_path,
                                                             clip_model=self.clip_model,
@@ -95,13 +84,9 @@ class VideoRag:
     def index_video_llama_server(self, video_path: Path, server_bin: Path, models_dir: Path):
         if self.reset:
             try:
-                w = self.llm.delete()
-                if w:
-                    print("\033[1;32mSupermemory Cleared\033[0m")
-                else:
-                    print("\033[1;32mSupermemory Not Cleared\033[0m")
-            except:
-                print("\033[1;32mSupermemory Initialized✅\033[0m")
+                self.llm.delete()
+            except Exception:
+                pass
         llama_server_manager = LlamaServerManager()        
         cmd_caption_server = [
             str(server_bin),
@@ -118,7 +103,7 @@ class VideoRag:
         process_caption = None
 
         try:
-            print("🔌 Launching background Gemma 3 Visual Captioning Core (Port 8080)...")
+            ui.step("Launching Gemma 3 captioning server on port 8080...")
             process_caption = subprocess.Popen(
                 cmd_caption_server, 
                 stdout=subprocess.DEVNULL, 
@@ -133,7 +118,7 @@ class VideoRag:
             if not server_ready:
                 raise TimeoutError("Captioning engine failed to initialize within VRAM allocation limits.")
 
-            print("🚀 Both video processing and server initialization completed successfully!")
+            ui.success("Video frames processed and captioning server ready")
             embeddings, metadatas, ids = captioning_and_embedding_llama_server(
                                                                         frame_PIL= frame_PIL,
                                                                         clip_model=self.clip_model,
@@ -147,18 +132,11 @@ class VideoRag:
                                         embeddings=embeddings,
                                         metadata=metadatas)
         except Exception as e:
-            print(f"❌ Critical error during server initialization or video processing: {e}")
+            ui.error(f"Pipeline failed: {e}")
         finally:
-            print(" Safely terminating active background engine subprocesses...")            
             if process_caption:
                 process_caption.terminate()
                 process_caption.wait()
-                
-            # if process_embedding:
-            #     process_embedding.terminate()
-            #     process_embedding.wait()
-                
-            print("✨ System clean up finished.")
     
     def index_audio(self, video_path:Path):
         whisper_model = self.models.get_whisper()

@@ -29,12 +29,6 @@ from rich.rule import Rule
 from rich.markdown import Markdown
 from gurrt.cli import ui
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.history import InMemoryHistory
-from prompt_toolkit.styles import Style as PromptStyle
-
 console = ui.console
 
 app = typer.Typer(help="gUrrT: A Video Understanding Tool")
@@ -43,74 +37,6 @@ config_dir.mkdir(exist_ok=True, parents=True)
 llama_server_manager = LlamaServerManager()
 
 _VALID_MODELS = {"smolvlm", "blip2"}
-_session_file = config_dir / "session.json"
-
-
-# ── Session persistence ───────────────────────────────────────────────────────
-
-def _save_session(video_path: str) -> None:
-    with open(_session_file, "w") as f:
-        json.dump({"last_video": video_path}, f)
-
-
-def _load_session() -> tuple[Optional[VideoRag], Optional[str]]:
-    if not _session_file.exists():
-        return None, None
-    try:
-        with open(_session_file) as f:
-            data = json.load(f)
-        last_video = data.get("last_video", "")
-        if last_video:
-            rag = VideoRag()
-            return rag, last_video
-    except Exception:
-        pass
-    return None, None
-
-
-# ── Slash command completion ──────────────────────────────────────────────────
-
-_SLASH_COMMANDS = [
-    ("init",            "Save API keys (Groq + Supermemory)"),
-    ("init-llama",      "Download Gemma 3 + llama-server binary"),
-    ("models-download", "Download all AI models locally"),
-    ("index",           "Index with smolvlm or blip2              /index <path> <model>"),
-    ("index-llama",     "Index with local Gemma 3  [4 GB+]        /index-llama <path>"),
-    ("index-ollama",    "Index with an Ollama model               /index-ollama <path> <model>"),
-    ("help",            "Show commands & VRAM guide"),
-    ("exit",            "End session"),
-]
-
-
-class _SlashCompleter(Completer):
-    def get_completions(self, document, complete_event):
-        text = document.text_before_cursor
-        if not text.startswith("/"):
-            return
-        typed = text[1:].lower()
-        for cmd, desc in _SLASH_COMMANDS:
-            if cmd.startswith(typed):
-                yield Completion(
-                    "/" + cmd,
-                    start_position=-len(text),
-                    display=f"/{cmd}",
-                    display_meta=desc,
-                )
-
-
-_pt_style = PromptStyle.from_dict({
-    "prompt-name":     "bold ansicyan",
-    "prompt-dot-on":   "bold ansigreen",
-    "prompt-dot-off":  "ansigray",
-    "prompt-arrow":    "bold ansicyan",
-    # completion popup
-    "completion-menu.completion":              "bg:#0d1b2a fg:#a0b4c8",
-    "completion-menu.completion.current":      "bg:#006080 fg:#ffffff bold",
-    "completion-menu.meta.completion":         "bg:#0d1b2a fg:#506070",
-    "completion-menu.meta.completion.current": "bg:#005060 fg:#90c0d0",
-    "scrollbar.background": "bg:#0d1b2a",
-    "scrollbar.button":     "bg:#004060",
-})
 
 
 # ── Help ──────────────────────────────────────────────────────────────────────
@@ -372,7 +298,6 @@ def _do_index(video_path: str, model_name: str) -> Optional[VideoRag]:
         "[primary]→[/primary] [dim]Type your question at the prompt.[/dim]",
         border_style="bright_green",
     ))
-    _save_session(str(video_path))
     return rag
 
 
@@ -415,7 +340,6 @@ def _do_index_llama(video_path_str: str) -> Optional[VideoRag]:
         "[primary]→[/primary] [dim]Type your question at the prompt.[/dim]",
         border_style="bright_green",
     ))
-    _save_session(video_path_str)
     return rag
 
 
@@ -439,7 +363,6 @@ def _do_index_ollama(video_path_str: str, model_name: str) -> Optional[VideoRag]
         "[primary]→[/primary] [dim]Type your question at the prompt.[/dim]",
         border_style="bright_green",
     ))
-    _save_session(video_path_str)
     return rag
 
 
@@ -449,54 +372,26 @@ def _run_session() -> None:
     _rag: Optional[VideoRag] = None
     _indexed = False
 
-    # ── Restore last session ──────────────────────────────────────────────────
-    _rag, _last_video = _load_session()
-    _indexed = _rag is not None
-
-    if _indexed:
-        console.print(Panel(
-            f"[success]Session resumed.[/success]\n"
-            f"[dim]Last indexed: {_last_video}[/dim]\n\n"
-            "[primary]→[/primary] [dim]Type your question to continue, or /help for commands.[/dim]",
-            title="[primary]gUrrT Session[/primary]",
-            border_style="cyan",
-        ))
-    else:
-        console.print(Panel(
-            "[info]Type a question to ask about your video, or use a slash command.[/info]\n\n"
-            "[dim]"
-            "  /help                          show commands & VRAM guide\n"
-            "  /init                          save API keys\n"
-            "  /init-llama                    download Gemma 3 + server binary\n"
-            "  /models-download               download all AI models\n"
-            "  /index <path> <model>          index with smolvlm or blip2\n"
-            "  /index-llama <path>            index with local Gemma 3  (needs /init-llama)\n"
-            "  /index-ollama <path> <model>   index with an Ollama model\n"
-            "  /exit                          end session"
-            "[/dim]",
-            title="[primary]gUrrT Session[/primary]",
-            border_style="cyan",
-        ))
-
-    _pt_session: PromptSession = PromptSession(
-        completer=_SlashCompleter(),
-        complete_while_typing=True,
-        history=InMemoryHistory(),
-        style=_pt_style,
-    )
+    console.print(Panel(
+        "[info]Type a question to ask about your video, or use a slash command.[/info]\n\n"
+        "[dim]"
+        "  /help                          show commands & VRAM guide\n"
+        "  /init                          save API keys\n"
+        "  /init-llama                    download Gemma 3 + server binary\n"
+        "  /models-download               download all AI models\n"
+        "  /index <path> <model>          index with smolvlm or blip2\n"
+        "  /index-llama <path>            index with local Gemma 3  (needs /init-llama)\n"
+        "  /index-ollama <path> <model>   index with an Ollama model\n"
+        "  /exit                          end session"
+        "[/dim]",
+        title="[primary]gUrrT Session[/primary]",
+        border_style="cyan",
+    ))
 
     while True:
-        prompt_tokens = FormattedText([
-            ("", "\n"),
-            ("class:prompt-name", "gurrt"),
-            ("", " "),
-            ("class:prompt-dot-on" if _indexed else "class:prompt-dot-off", "●" if _indexed else "○"),
-            ("", " "),
-            ("class:prompt-arrow", "❯"),
-            ("", " "),
-        ])
+        status = "[success]●[/success]" if _indexed else "[dim]○[/dim]"
         try:
-            raw = _pt_session.prompt(prompt_tokens)
+            raw = Prompt.ask(f"\n[primary]gurrt[/primary] {status} [primary]❯[/primary]")
         except (KeyboardInterrupt, EOFError):
             console.print()
             ui.info("Goodbye.")
@@ -519,8 +414,8 @@ def _run_session() -> None:
                 response = asyncio.run(_rag.ask(query=raw))
             console.print(Panel(
                 Markdown(response),
-                title="[primary]Answer[/primary]",
-                border_style="cyan",
+                title="[success]Answer[/success]",
+                border_style="bright_green",
             ))
             continue
 
@@ -604,8 +499,8 @@ def _run_session() -> None:
                 response = asyncio.run(_rag.ask(query=rest))
             console.print(Panel(
                 Markdown(response),
-                title="[primary]Answer[/primary]",
-                border_style="cyan",
+                title="[success]Answer[/success]",
+                border_style="bright_green",
             ))
 
         else:

@@ -6,12 +6,12 @@ import aiohttp
 from typing import List, Dict, Any
 import requests
 import json
-from tqdm import tqdm
 from gurrt.utils.utils import temporal_persistence_filter
 from pathlib import Path
 from huggingface_hub import hf_hub_download
-from  gurrt.config.config import LlamaServerManager
+from gurrt.config.config import LlamaServerManager
 from gurrt.core.prompts import GEMMA_CAPTION_PROMPT
+from gurrt.cli import ui
 
 
 
@@ -59,72 +59,58 @@ async def _caption_single_frame_worker(
                     caption = result["choices"][0]["message"]["content"]
                     return {"index": index, "text": caption}
                 else:
-                    print(f"⚠️ Engine error on node index {index}: Status Code {resp.status}")
+                    ui.warn(f"Engine error on frame {index}: HTTP {resp.status}")
                     return {"index": index, "text": "Error: Failed to generate description."}
         except Exception as e:
-            print(f"❌ Server timeout or network loss on node index {index}: {e}")
+            ui.error(f"Server timeout on frame {index}: {e}")
             return {"index": index, "text": "Error: Pipeline connection exception."}
 
 def batch_caption_frames(frame_list: list, concurrency_limit: int = 4) -> List[Dict[str, Any]]:
-    async def run_pipeline():
-        semaphore = asyncio.Semaphore(concurrency_limit)
-        tasks = []
-        completed = 0
-        total = len(frame_list)
-        pbar = tqdm(total=total, desc="🧠 Captioning Frames", unit="frame")
+    total = len(frame_list)
 
-        async def tracked_worker(session, b64_str, idx, semaphore):
-            nonlocal completed
-            result = await _caption_single_frame_worker(session, b64_str, idx, semaphore)
-            completed += 1
-            active = len([t for t in tasks if not t.done()])
-            pbar.set_postfix({
-                "active": min(active, concurrency_limit),  # concurrent slots in use
-                "done": completed,
-                "queued": total - completed
-            })
-            pbar.update(1)
-            return result
+    with ui.make_progress() as progress:
+        task_id = progress.add_task("  Captioning frames", total=total)
 
-        async with aiohttp.ClientSession() as session:
-            for idx, pil_frame in enumerate(frame_list):
-                try:
-                    b64_str = _convert_pil_to_base64(pil_frame)
-                    task = asyncio.create_task(
-                        tracked_worker(session, b64_str, idx, semaphore)
-                    )
-                    tasks.append(task)
-                except Exception as e:
-                    print(f"Skipping corrupt frame at index {idx}: {e}")
+        async def run_pipeline():
+            semaphore = asyncio.Semaphore(concurrency_limit)
+            tasks = []
 
-            print(f"📦 Dispatched {len(tasks)} tasks | concurrency limit: {concurrency_limit}")
-            results = await asyncio.gather(*tasks)
+            async def tracked_worker(session, b64_str, idx):
+                result = await _caption_single_frame_worker(session, b64_str, idx, semaphore)
+                progress.advance(task_id)
+                return result
 
-        pbar.close()
-        results = [r for r in results if r is not None]
-        results.sort(key=lambda x: x["index"])
+            async with aiohttp.ClientSession() as session:
+                for idx, pil_frame in enumerate(frame_list):
+                    try:
+                        b64_str = _convert_pil_to_base64(pil_frame)
+                        tasks.append(asyncio.create_task(tracked_worker(session, b64_str, idx)))
+                    except Exception as e:
+                        ui.warn(f"Skipping corrupt frame {idx}: {e}")
 
-        # with open("captioned_nodes_debug.json", "w") as f:
-        #     json.dump(results, f, indent=4)
+                results = await asyncio.gather(*tasks)
 
-        return results
+            results = [r for r in results if r is not None]
+            results.sort(key=lambda x: x["index"])
+            return results
 
-    return asyncio.run(run_pipeline())
+        return asyncio.run(run_pipeline())
 
 def wait_for_server():
-    print("⏳ Awaiting background system engine initialization...")
+    ui.step("Waiting for captioning server to start...")
     for attempt in range(40):
         try:
             if requests.get("http://localhost:8080/health", timeout=1).status_code == 200:
-                print("✅ Captioning engine is online!")
+                ui.success("Captioning server ready")
                 return True
         except requests.exceptions.RequestException:
             pass
-        time.sleep(1.5)  
-    return False    
+        time.sleep(1.5)
+    return False
+
 
 def process_video(video_path):
-    print("🎬 Starting video temporal persistence filtering...")
+    ui.step("Scanning video for scene changes...")
     return temporal_persistence_filter(video_path=video_path)
 
 
@@ -147,12 +133,12 @@ def download_gemma3_models(models_dir: Path):
         target_path = models_dir / filename
         
         if not target_path.exists():
-            print(f"Downloading {filename} from Hugging Face...")
+            ui.step(f"Downloading {filename}...")
             hf_hub_download(
                 repo_id=huggingface_repo,
                 filename=filename,
                 local_dir=str(models_dir),
             )
-            print(f"✔ Successfully acquired {filename}")
+            ui.success(f"Downloaded {filename}")
         else:
-            print(f"✔ {filename} already exists in target directory. Skipping.")
+            ui.info(f"{filename} already present, skipping")

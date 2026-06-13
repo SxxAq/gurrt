@@ -4,6 +4,7 @@ import torch
 
 from gurrt.config.config import Settings
 from gurrt.utils.utils import audio_extraction, audio_to_text, chunk_text
+from gurrt.cli import ui
 
 def audio_extract_chunk_and_embed(video_path: Path,
                                 settings: Settings, 
@@ -11,10 +12,9 @@ def audio_extract_chunk_and_embed(video_path: Path,
                                 clip_processor, 
                                 whisper_model,
                                 device):
-    print(f"\033[1;32mExtracting Audio\033[0m")
-    audio_file = audio_extraction(path= video_path,
-                                settings= settings)
-    print(f"\033[1;32mTranscribing Audio\033[0m")
+    ui.step("Extracting audio track...")
+    audio_file = audio_extraction(path=video_path, settings=settings)
+    ui.step("Transcribing audio...")
     text = audio_to_text(audio_file, 
                         model= whisper_model,
                         beam_size= 1)
