@@ -118,7 +118,7 @@ class ModelManager:
         self._reranker = None
         self._free_gpu()
         
-def download_models(cache_dir, model_name : str = "distil-large-v2"):
+def download_models(cache_dir):
     print("Downloading CLIP....")
     clip = CLIPModel.from_pretrained("openai/clip-vit-base-patch32", use_safetensors = True)
     proc = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
@@ -141,11 +141,8 @@ def download_models(cache_dir, model_name : str = "distil-large-v2"):
     reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
     reranker.save(str(cache_dir / "reranker_model"))
     
-    print(f"Downloading Whisper {model_name}....")
-    
-    settings = Settings()
+    print(f"Downloading Faster Whisper....")
     snapshot_download(
-        repo_id=f"Systran/faster-whisper-{model_name}",
+        repo_id=f"Systran/faster-distil-whisper-large-v2",
         local_dir=str(cache_dir / "whisper_model"),
-        token= settings.HuggingFace_Token
     )
