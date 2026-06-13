@@ -139,8 +139,8 @@ def download_gemma3_models(models_dir: Path):
     llama_server_manager = LlamaServerManager()
     huggingface_repo = llama_server_manager.hf_repo
     files = [
-        llama_server_manager.model, 
-        llama_server_manager.mmproj_model
+        llama_server_manager.model_filename, 
+        llama_server_manager.mmproj_filename
     ]
 
     for filename in files:
