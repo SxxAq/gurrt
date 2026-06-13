@@ -12,6 +12,7 @@ from pathlib import Path
 from huggingface_hub import hf_hub_download
 from  gurrt.config.config import hf_repo, model, mmproj_model
 from huggingface_hub.utils import enable_progress_bars
+from gurrt.core.prompts import GEMMA_CAPTION_PROMPT
 
 
 
@@ -38,7 +39,7 @@ async def _caption_single_frame_worker(
                 "content": [
                     {
                         "type": "text", 
-                        "text": "Analyze this video lecture frame for a search indexing engine. Provide**On-Screen Content**: [Transcribe  any key text, equations, bullet points, or diagrams visible].Be concise to the point No prose.No formatting.No introductions.No explanations."
+                        "text":GEMMA_CAPTION_PROMPT
 
                     },
                     {

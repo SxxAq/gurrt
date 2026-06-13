@@ -19,3 +19,4 @@ QUESTION:
 ANSWER:
 """
 
+GEMMA_CAPTION_PROMPT =  "Analyze this video lecture frame for a search indexing engine. Provide**On-Screen Content**: [Transcribe  any key text, equations, bullet points, or diagrams visible].Be concise to the point No prose.No formatting.No introductions.No explanations."
