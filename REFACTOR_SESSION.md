@@ -353,3 +353,234 @@ Switched from `model.transcribe(audio_path, beam_size=beam_size, vad_filter=True
 | **CLI `models_download` doesn't pass model name from Settings** | Low | `download_models(cache_dir)` in `cli/main.py` calls with the hardcoded default. If a user changes `WHISPER_MODEL` in config, the downloaded model won't match what `get_whisper()` loads. Should read from `Settings()` and pass through. |
 | **FastAPI `server.py` rewrite** | Low | Currently broken — imports `query_llm` and `delete` as module-level functions (they are methods on `LLMService`), and uses subprocess paths that don't work for an installed package. Needs full rewrite using `VideoRag` properly |
 | **BM25 / sparse hybrid retrieval for ASR** | Low | Dense CLIP embeddings + keyword overlap for transcript search. Lower priority given the CrossEncoder reranker already handles re-scoring accurately |
+
+---
+
+## CLI / UX Improvements Session ✅
+
+**Files:** `src/gurrt/cli/main.py`, `src/gurrt/cli/ui.py`
+
+---
+
+### 1. Color Theme Centralized to `ui.py`
+
+All color constants moved to `cli/ui.py` — nothing hardcoded in `main.py`. Every panel border, rule, progress bar, and prompt-toolkit color is defined in one place and referenced via `ui.BORDER_*` / `ui.C_*` constants.
+
+```python
+# cli/ui.py
+C_ACCENT   = "bright_cyan"
+C_SUCCESS  = "bright_green"
+C_ERROR    = "bright_red"
+C_WARNING  = "yellow"
+C_DIM      = "dim"
+
+BORDER_PRIMARY = "cyan"
+BORDER_SUCCESS = C_SUCCESS
+BORDER_ERROR   = C_ERROR
+BORDER_WARNING = C_WARNING    # added this session — yellow, for setup-required panels
+```
+
+---
+
+### 2. Answer Panel Styling
+
+LLM responses rendered with `Markdown()` inside a `Panel` with a cyan border (`BORDER_PRIMARY`). Content is plain white — not tinted.
+
+```python
+console.print(Panel(
+    Markdown(response),
+    title="[primary]Answer[/primary]",
+    border_style=ui.BORDER_PRIMARY,
+))
+```
+
+---
+
+### 3. Slash Command Autocomplete (`_SlashCompleter`)
+
+When the user types `/` in the REPL, a popup lists all available commands with descriptions. Implemented with prompt_toolkit's `Completer` API. Completion fires on every keystroke while the input starts with `/`.
+
+```python
+class _SlashCompleter(Completer):
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.startswith("/"):
+            return
+        typed = text[1:].lower()
+        for cmd, desc in _SLASH_COMMANDS:
+            if cmd.startswith(typed):
+                yield Completion("/" + cmd, start_position=-len(text),
+                                 display=f"/{cmd}", display_meta=desc)
+```
+
+All popup colors (background, selected entry, meta text, scrollbar) defined in `ui.py` under `_PT_POPUP_*` constants.
+
+---
+
+### 4. Slash Command Input Highlighting (`SlashCommandLexer`)
+
+As the user types `/command args`, the `/command` token is rendered in bold cyan and the argument text in white. Uses a custom prompt_toolkit `Lexer`.
+
+```python
+class SlashCommandLexer(Lexer):
+    def lex_document(self, document):
+        lines = document.lines
+        def get_line(lineno):
+            line = lines[lineno]
+            if not line.startswith("/"):
+                return [("", line)]
+            idx = line.find(" ")
+            if idx == -1:
+                return [("class:slash-cmd", line)]
+            return [("class:slash-cmd", line[:idx]), ("class:slash-args", line[idx:])]
+        return get_line
+```
+
+`slash-cmd` maps to `bold ansicyan`; `slash-args` maps to `ansiwhite` — both defined in `ui.pt_style`.
+
+---
+
+### 5. Screen Clear on `gurrt` Launch
+
+`os.system("cls" if os.name == "nt" else "clear")` at the top of the `main()` callback so the terminal is cleared and starts with just the banner whenever `gurrt` is invoked.
+
+---
+
+### 6. Spinner Dots for All Loading Operations
+
+Every blocking operation wrapped in `console.status("[info]...[/info]", spinner="dots")` so the terminal shows an animated spinner instead of freezing silently.
+
+| Operation | Spinner label |
+|-----------|--------------|
+| GPU detection in `/init` | `Detecting GPU...` |
+| Model download in `/models-download` | `Downloading and caching models...` |
+| Gemma 3 weights download in `/init-llama` | `Downloading Gemma 3 model weights...` |
+| llama-server release fetch | `Fetching latest llama-server release from GitHub...` |
+| llama-server zip download | `Downloading <filename>...` |
+| llama-server zip extraction | `Extracting server binary...` |
+| Model load in `/index` | `Loading model...` |
+| Frame indexing (smolvlm) | `Indexing frames with SmolVLM...` |
+| Frame indexing (blip2) | `Indexing frames with BLIP-2...` |
+| Frame indexing (llama) | `Indexing frames with Gemma 3 via llama-server...` |
+| Frame indexing (ollama) | `Indexing frames with <model>...` |
+| Audio transcription | `Transcribing audio...` |
+| LLM answer | `Thinking...` |
+
+---
+
+### 7. `/clear` Command
+
+Clears the terminal and redraws the banner + gUrrT session panel. If a video is currently indexed, the panel shows "Session active" with the current video path. If not indexed, shows the full command reference.
+
+```python
+elif cmd == "clear":
+    os.system("cls" if os.name == "nt" else "clear")
+    ui.show_banner()
+    if _indexed:
+        console.print(Panel(
+            f"[success]Session active.[/success]\n"
+            f"[dim]Indexed: {_last_video}[/dim]\n\n"
+            "[primary]→[/primary] [dim]Type your question to continue ...[/dim]",
+            title="[primary]gUrrT Session[/primary]",
+            border_style=ui.BORDER_PRIMARY,
+        ))
+    else:
+        # full command-reference panel
+```
+
+---
+
+### 8. Session Persistence (`session.json`)
+
+`session.json` stored in the platform config dir (`platformdirs.user_config_dir("gurrt")`) acts as a persistent key-value store across REPL sessions. All save functions use a **read-merge-write** pattern so no key is accidentally cleared when another key is saved.
+
+| Key | Type | Written by | Read by |
+|-----|------|-----------|---------|
+| `last_video` | `str` | `_save_session()` after each successful index | `_load_session()` at REPL startup |
+| `ollama` | `bool` | `_save_ollama_flag()` during `/init` | `_get_ollama_flag()` in `_do_index_ollama()` |
+| `gpu_mb` | `int` | `_save_gpu_info()` during `/init` | `_get_gpu_mb()` in index commands and `_do_init_llama()` |
+| `init_done` | `bool` | `_save_init_done()` after `/init` completes | `_check_prereqs()` |
+| `models_downloaded` | `bool` | `_save_models_done()` after `/models-download` completes | `_check_prereqs()` |
+
+---
+
+### 9. Ollama Presence Check in `/init`
+
+After the user enters API keys, `/init` asks whether Ollama is installed (yes/no prompt). The answer is saved to `session.json` as `"ollama": bool`.
+
+`/index-ollama` reads this flag before proceeding. If `False`, shows a red error panel explaining Ollama is not installed and linking to `https://ollama.com`, rather than letting the call fail with a cryptic error.
+
+---
+
+### 10. GPU VRAM Saved at `/init` Time
+
+`nvidia-smi` subprocess moved from being called on every `/index` to once during `/init`. Result saved to `session.json` as `"gpu_mb": int` (0 = no GPU detected). All index commands and `/init-llama` read from session.json via `_get_gpu_mb()`.
+
+**Before:** subprocess ran on every `/index` call.  
+**After:** subprocess runs once, result persists across sessions.
+
+---
+
+### 11. VRAM Guard for Llama Commands
+
+`_do_init_llama()` and `_do_index_llama()` check GPU VRAM from session.json before doing any work.
+
+- **VRAM info not available** (i.e., `/init` never run): yellow warning panel — "Run /init first."
+- **VRAM < 4500 MB** (or 0 = no GPU): red error panel showing detected VRAM, explaining the 4 GB+ requirement, and suggesting `/index smolvlm` or `/index blip2` as alternatives.
+
+The VRAM guard fires after `_check_prereqs()` — so if `/init` was skipped entirely, the prereqs message appears first (clearer than "GPU info not available").
+
+---
+
+### 12. Setup Prerequisites Check (`_check_prereqs()`)
+
+All index commands and `/init-llama` call `_check_prereqs(command_name)` as their first action. Reads `init_done` and `models_downloaded` from `session.json`. If either is missing, prints a yellow panel that lists exactly which step(s) are missing and returns `False` — the calling function returns immediately.
+
+```python
+def _check_prereqs(command: str) -> bool:
+    # reads init_done, models_downloaded from session.json
+    if init_done and models_done:
+        return True
+    # prints yellow Panel listing missing steps
+    return False
+```
+
+Commands guarded: `/index`, `/index-llama`, `/index-ollama`, `/init-llama`.
+
+---
+
+### 13. Comprehensive Try-Catch Error Handling
+
+Every major blocking operation wrapped in `try/except Exception as e`. On failure: prints a `Panel` with `border_style=ui.BORDER_ERROR` (red) and the raw exception text. The REPL session never crashes.
+
+| Function | Blocks wrapped |
+|----------|---------------|
+| `_do_init()` | Config file save + ollama flag save |
+| `_do_models_download()` | Entire model download |
+| `_do_index()` | Video frame indexing (block 1), audio transcription (block 2) |
+| `_do_index_llama()` | Gemma 3 weights download, video indexing (block 2), audio transcription (block 3) |
+| `_do_index_ollama()` | Video indexing + ollama call (block 1), audio transcription (block 2) |
+| `_do_init_llama()` | llama-server release fetch + download + extraction |
+
+Each block is independent — a video indexing failure does not prevent the error from being shown cleanly and does not affect other session state.
+
+---
+
+### 14. Session Resume on Startup
+
+At REPL startup, `_load_session()` reads `last_video` from `session.json`. If present, a `VideoRag()` object is created and the REPL starts in "indexed" state — the prompt shows `●` (green dot) and a "Session resumed" panel shows the last video path. If absent, the normal welcome panel with the command reference is shown.
+
+---
+
+### 15. Ask / Direct Question Guard
+
+Both the direct question path (typing without `/`) and `/ask` check `if not _indexed or _rag is None` before querying the LLM. If no video is indexed, a yellow warning is shown. The check relies on `_indexed` which is `False` whenever `_load_session()` returned `(None, None)` — i.e., no `last_video` in `session.json` and no video indexed this session.
+
+```python
+if not raw.startswith("/"):
+    if not _indexed or _rag is None:
+        ui.warn("No video indexed yet. Use /index, /index-llama, or /index-ollama first.")
+        continue
+```
+
+Same guard applies to the `/ask` slash command path.

@@ -31,9 +31,7 @@ from gurrt.cli import ui
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import InMemoryHistory
-from prompt_toolkit.styles import Style as PromptStyle
 
 console = ui.console
 
@@ -47,10 +45,147 @@ _session_file = config_dir / "session.json"
 
 
 # ── Session persistence ───────────────────────────────────────────────────────
-
+# spnner dots added 
+# /clear command added
+# added ollama in session.json and error handling it if ollama is not installed 
+# added further try catches to save the session from crashing in video indexing and audio indexing
+# added vram error check in init-llama, index-llama, index 
 def _save_session(video_path: str) -> None:
+    data: dict = {}
+    if _session_file.exists():
+        try:
+            with open(_session_file) as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    data["last_video"] = video_path
     with open(_session_file, "w") as f:
-        json.dump({"last_video": video_path}, f)
+        json.dump(data, f)
+
+
+def _save_ollama_flag(has_ollama: bool) -> None:
+    data: dict = {}
+    if _session_file.exists():
+        try:
+            with open(_session_file) as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    data["ollama"] = has_ollama
+    with open(_session_file, "w") as f:
+        json.dump(data, f)
+
+
+def _get_ollama_flag() -> Optional[bool]:
+    if not _session_file.exists():
+        return None
+    try:
+        with open(_session_file) as f:
+            data = json.load(f)
+        val = data.get("ollama")
+        return bool(val) if val is not None else None
+    except Exception:
+        return None
+
+
+def _save_gpu_info(gpu_mb: int) -> None:
+    data: dict = {}
+    if _session_file.exists():
+        try:
+            with open(_session_file) as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    data["gpu_mb"] = gpu_mb
+    with open(_session_file, "w") as f:
+        json.dump(data, f)
+
+
+def _get_gpu_mb() -> Optional[int]:
+    """Returns saved GPU VRAM in MB, or None if /init hasn't been run yet."""
+    if not _session_file.exists():
+        return None
+    try:
+        with open(_session_file) as f:
+            data = json.load(f)
+        val = data.get("gpu_mb")
+        return int(val) if val is not None else None
+    except Exception:
+        return None
+
+
+def _detect_and_save_gpu() -> int:
+    """Run nvidia-smi, save VRAM to session.json. Returns MB (0 = no GPU)."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+        )
+        gpu_mb = int(result.stdout.strip())
+    except Exception:
+        gpu_mb = 0
+    _save_gpu_info(gpu_mb)
+    return gpu_mb
+
+
+def _save_init_done() -> None:
+    data: dict = {}
+    if _session_file.exists():
+        try:
+            with open(_session_file) as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    data["init_done"] = True
+    with open(_session_file, "w") as f:
+        json.dump(data, f)
+
+
+def _save_models_done() -> None:
+    data: dict = {}
+    if _session_file.exists():
+        try:
+            with open(_session_file) as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    data["models_downloaded"] = True
+    with open(_session_file, "w") as f:
+        json.dump(data, f)
+
+
+def _check_prereqs(command: str) -> bool:
+    """Return True if /init and /models-download have both been completed.
+    Prints a yellow panel listing exactly which step(s) are missing."""
+    init_done = False
+    models_done = False
+    if _session_file.exists():
+        try:
+            with open(_session_file) as f:
+                data = json.load(f)
+            init_done = bool(data.get("init_done", False))
+            models_done = bool(data.get("models_downloaded", False))
+        except Exception:
+            pass
+
+    if init_done and models_done:
+        return True
+
+    missing = []
+    if not init_done:
+        missing.append("  [primary]/init[/primary]              — save API keys & detect GPU")
+    if not models_done:
+        missing.append("  [primary]/models-download[/primary]   — download AI models to disk")
+
+    console.print(Panel(
+        f"[warning]Cannot run [/warning][primary]{command}[/primary][warning] — setup incomplete.[/warning]\n\n"
+        "[info]Please run the following step(s) first:[/info]\n\n" +
+        "\n".join(missing),
+        title="[warning]Setup Required[/warning]",
+        border_style=ui.BORDER_WARNING,
+    ))
+    return False
 
 
 def _load_session() -> tuple[Optional[VideoRag], Optional[str]]:
@@ -77,6 +212,7 @@ _SLASH_COMMANDS = [
     ("index",           "Index with smolvlm or blip2              /index <path> <model>"),
     ("index-llama",     "Index with local Gemma 3  [4 GB+]        /index-llama <path>"),
     ("index-ollama",    "Index with an Ollama model               /index-ollama <path> <model>"),
+    ("clear",           "Clear the screen and redraw header"),
     ("help",            "Show commands & VRAM guide"),
     ("exit",            "End session"),
 ]
@@ -98,25 +234,10 @@ class _SlashCompleter(Completer):
                 )
 
 
-_pt_style = PromptStyle.from_dict({
-    "prompt-name":     "bold ansicyan",
-    "prompt-dot-on":   "bold ansigreen",
-    "prompt-dot-off":  "ansigray",
-    "prompt-arrow":    "bold ansicyan",
-    # completion popup
-    "completion-menu.completion":              "bg:#0d1b2a fg:#a0b4c8",
-    "completion-menu.completion.current":      "bg:#006080 fg:#ffffff bold",
-    "completion-menu.meta.completion":         "bg:#0d1b2a fg:#506070",
-    "completion-menu.meta.completion.current": "bg:#005060 fg:#90c0d0",
-    "scrollbar.background": "bg:#0d1b2a",
-    "scrollbar.button":     "bg:#004060",
-})
-
-
 # ── Help ──────────────────────────────────────────────────────────────────────
 
 def _show_quick_start() -> None:
-    console.print(Rule("[primary]Getting Started[/primary]", style="cyan"))
+    console.print(Rule("[primary]Getting Started[/primary]", style=ui.BORDER_PRIMARY))
     console.print()
 
     workflow = [
@@ -147,18 +268,18 @@ def _show_quick_start() -> None:
     ]
 
     for num, cmd, desc, note in workflow:
-        console.print(f"  [primary]Step {num}[/primary]  [bold bright_cyan]{cmd}[/bold bright_cyan]")
+        console.print(f"  [primary]Step {num}[/primary]  [primary]{cmd}[/primary]")
         console.print(f"           [dim]{desc}[/dim]")
         console.print(f"           [info]{note}[/info]")
         console.print()
 
-    console.print(Rule("[primary]Pick Your Index Command — VRAM Guide[/primary]", style="cyan"))
+    console.print(Rule("[primary]Pick Your Index Command — VRAM Guide[/primary]", style=ui.BORDER_PRIMARY))
     console.print()
 
     vram_table = Table(
         show_header=True,
-        header_style="bold bright_cyan",
-        border_style="cyan",
+        header_style=ui.STYLE_HEADER,
+        border_style=ui.BORDER_PRIMARY,
         show_lines=True,
     )
     vram_table.add_column("Your VRAM", style="primary", no_wrap=True, min_width=10)
@@ -204,43 +325,104 @@ def _do_init() -> None:
     console.print(Panel(
         f"[info]Get your Groq API Key at:[/info]\n[primary]{groq_link}[/primary]",
         title="[primary]Groq[/primary]",
-        border_style="cyan",
+        border_style=ui.BORDER_PRIMARY,
     ))
     groq = Prompt.ask("[info]Groq API Key[/info]", password=True)
 
     console.print(Panel(
         f"[info]Get your Supermemory API Key at:[/info]\n[primary]{supermemory_link}[/primary]",
         title="[primary]Supermemory[/primary]",
-        border_style="cyan",
+        border_style=ui.BORDER_PRIMARY,
     ))
     supermemory = Prompt.ask("[info]Supermemory API Key[/info]", password=True)
 
-    with open(config_file, "w") as f:
-        json.dump({"GROQ_API_KEY": groq, "SUPERMEMORY_API_KEY": supermemory}, f, indent=2)
+    ollama_link = "https://ollama.com"
+    console.print(Panel(
+        f"[info]Ollama lets you run vision models locally (used by [/info][primary]/index-ollama[/primary][info]).[/info]\n"
+        f"[info]Download and install it from:[/info]\n[primary]{ollama_link}[/primary]",
+        title="[primary]Ollama[/primary]",
+        border_style=ui.BORDER_PRIMARY,
+    ))
+    ollama_ans = Prompt.ask("[info]Is Ollama installed on your device?[/info]", choices=["yes", "no"], default="no")
+    has_ollama = ollama_ans.lower() == "yes"
+    try:
+        _save_ollama_flag(has_ollama)
+        with open(config_file, "w") as f:
+            json.dump({"GROQ_API_KEY": groq, "SUPERMEMORY_API_KEY": supermemory}, f, indent=2)
+    except Exception as e:
+        console.print(Panel(
+            f"[error]{e}[/error]",
+            title="[error]Failed to Save Configuration[/error]",
+            border_style=ui.BORDER_ERROR,
+        ))
+        return
+
+    with console.status("[info]Detecting GPU...[/info]", spinner="dots"):
+        gpu_mb = _detect_and_save_gpu()
+    _save_init_done()
+
+    if gpu_mb >= 4500:
+        gpu_line = f"\n[dim]GPU: {gpu_mb} MB VRAM — llama-server supported[/dim]"
+    elif gpu_mb > 0:
+        gpu_line = f"\n[dim]GPU: {gpu_mb} MB VRAM [/dim]"
+    else:
+        gpu_line = "\n[dim]GPU: not detected — CPU only[/dim]"
 
     console.print(Panel(
-        f"[success]Configuration saved.[/success]\n[dim]{config_file}[/dim]",
-        border_style="bright_green",
+        f"[success]Configuration saved.[/success]\n[dim]{config_file}[/dim]{gpu_line}",
+        border_style=ui.BORDER_SUCCESS,
     ))
 
 
 def _do_init_llama() -> None:
+    if not _check_prereqs("/init-llama"):
+        return
+
+    gpu_mb = _get_gpu_mb()
+    if gpu_mb is None:
+        console.print(Panel(
+            "[warning]GPU info not available.[/warning]\n\n"
+            "[dim]Run [/dim][primary]/init[/primary][dim] first — it detects your GPU automatically.[/dim]",
+            title="[warning]Run /init First[/warning]",
+            border_style=ui.BORDER_WARNING,
+        ))
+        return
+    if gpu_mb < 4500:
+        console.print(Panel(
+            f"[error]{'No GPU detected' if gpu_mb == 0 else f'{gpu_mb} MB VRAM is not enough'}.[/error]\n\n"
+            "[dim]Gemma 3 via llama-server requires 4 GB+ (4500 MB+) VRAM.[/dim]\n\n"
+            "[info]Use instead:[/info]\n"
+            "  [primary]/index <path> smolvlm[/primary]  — works with 4 GB VRAM\n"
+            "  [primary]/index <path> blip2[/primary]    — lightest option",
+            title="[error]Insufficient VRAM[/error]",
+            border_style=ui.BORDER_ERROR,
+        ))
+        return
+
     if not llama_server_manager.llm_path.exists() or not llama_server_manager.mmproj_path.exists():
-        ui.step("Downloading Gemma 3 model weights...")
-        download_gemma3_models(llama_server_manager.models_dir)
+        try:
+            with console.status("[info]Downloading Gemma 3 model weights...[/info]", spinner="dots"):
+                download_gemma3_models(llama_server_manager.models_dir)
+        except Exception as e:
+            console.print(Panel(
+                f"[error]{e}[/error]",
+                title="[error]Model Download Failed[/error]",
+                border_style=ui.BORDER_ERROR,
+            ))
+            return
 
     if llama_server_manager.server_bin.exists():
         ui.success("Llama server binary already present.")
         return
 
     llama_server_manager.bin_dir.mkdir(parents=True, exist_ok=True)
-    ui.step("Fetching latest llama-server release from GitHub...")
     try:
         req = urllib.request.Request(
             llama_server_manager.llama_release_url, headers={"User-Agent": "Mozilla/5.0"}
         )
-        with urllib.request.urlopen(req) as response:
-            release_data = json.loads(response.read().decode())
+        with console.status("[info]Fetching latest llama-server release from GitHub...[/info]", spinner="dots"):
+            with urllib.request.urlopen(req) as response:
+                release_data = json.loads(response.read().decode())
 
         download_url = None
         for asset in release_data.get("assets", []):
@@ -257,30 +439,32 @@ def _do_init_llama() -> None:
                     break
 
         zip_path = config_dir / "temp_server.zip"
-        ui.step(f"Downloading {download_url.split('/')[-1]}...")
+        filename = download_url.split('/')[-1]
 
         req_dl = urllib.request.Request(download_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req_dl) as response, open(zip_path, "wb") as out_file:
-            shutil.copyfileobj(response, out_file)
+        with console.status(f"[info]Downloading {filename}...[/info]", spinner="dots"):
+            with urllib.request.urlopen(req_dl) as response, open(zip_path, "wb") as out_file:
+                shutil.copyfileobj(response, out_file)
 
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            extracted_count = 0
-            for file_path in zip_ref.namelist():
-                filename = os.path.basename(file_path)
-                lowered = filename.lower()
-                if not filename:
-                    continue
-                if lowered in ["llama-server.exe", "llama-server"]:
-                    with open(llama_server_manager.server_bin, "wb") as f:
-                        f.write(zip_ref.read(file_path))
-                    extracted_count += 1
-                elif lowered.endswith(".dll"):
-                    with open(llama_server_manager.bin_dir / filename, "wb") as f:
-                        f.write(zip_ref.read(file_path))
-                    extracted_count += 1
+        with console.status("[info]Extracting server binary...[/info]", spinner="dots"):
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                extracted_count = 0
+                for file_path in zip_ref.namelist():
+                    filename = os.path.basename(file_path)
+                    lowered = filename.lower()
+                    if not filename:
+                        continue
+                    if lowered in ["llama-server.exe", "llama-server"]:
+                        with open(llama_server_manager.server_bin, "wb") as f:
+                            f.write(zip_ref.read(file_path))
+                        extracted_count += 1
+                    elif lowered.endswith(".dll"):
+                        with open(llama_server_manager.bin_dir / filename, "wb") as f:
+                            f.write(zip_ref.read(file_path))
+                        extracted_count += 1
 
-            if extracted_count == 0:
-                raise FileNotFoundError("Could not locate execution components inside the release archive.")
+                if extracted_count == 0:
+                    raise FileNotFoundError("Could not locate execution components inside the release archive.")
 
         if os.path.exists(zip_path):
             os.remove(zip_path)
@@ -300,23 +484,35 @@ def _do_models_download() -> None:
     console.print(Panel(
         f"[dim]Cache location: {cache_dir}[/dim]",
         title="[primary]Downloading Models[/primary]",
-        border_style="cyan",
+        border_style=ui.BORDER_PRIMARY,
     ))
     from gurrt.core.models import download_models
-    download_models(cache_dir)
-    ui.success(f"All models cached at {cache_dir}")
+    try:
+        with console.status("[info]Downloading and caching models...[/info]", spinner="dots"):
+            download_models(cache_dir)
+        _save_models_done()
+        ui.success(f"All models cached at {cache_dir}")
+    except Exception as e:
+        console.print(Panel(
+            f"[error]{e}[/error]",
+            title="[error]Model Download Failed[/error]",
+            border_style=ui.BORDER_ERROR,
+        ))
 
 
 def _do_index(video_path: str, model_name: str) -> Optional[VideoRag]:
+    if not _check_prereqs("/index"):
+        return None
+
     if model_name.lower() not in _VALID_MODELS:
         console.print(Panel(
             f"[error]Unknown model:[/error] [primary]{model_name}[/primary]\n\n"
             "[info]Available models:[/info]\n"
-            "  [primary]smolvlm[/primary]  — best quality, needs 4 GB+ VRAM\n"
+            "  [primary]smolvlm[/primary]  — best quality, needs 4 GB+ VRAM, but works decently with lower VRAM as well\n"
             "  [primary]blip2[/primary]    — lighter, lower VRAM requirement\n\n"
             "[dim]Example: /index lecture.mp4 smolvlm[/dim]",
             title="[error]Invalid Model[/error]",
-            border_style="bright_red",
+            border_style=ui.BORDER_ERROR,
         ))
         return None
 
@@ -324,66 +520,105 @@ def _do_index(video_path: str, model_name: str) -> Optional[VideoRag]:
         console.print(Panel(
             f"[error]File not found:[/error]\n[dim]{video_path}[/dim]\n\n"
             "[dim]Example: /index lecture.mp4 smolvlm[/dim]",
-            border_style="bright_red",
+            border_style=ui.BORDER_ERROR,
         ))
         return None
 
-    result = subprocess.run(
-        ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-        capture_output=True,
-        text=True,
-    )
-    gpu_mb = result.stdout.strip()
-    FLAG = int(gpu_mb) > 4500
+    _gpu_mb = _get_gpu_mb() or 0
+    FLAG = _gpu_mb > 4500
+    gpu_display = f"{_gpu_mb} MB" if _gpu_mb > 0 else "not detected"
 
     vram_note = ""
     if model_name.lower() == "smolvlm":
         vram_note = (
             "\n[dim]4 GB+ VRAM detected — image splitting enabled[/dim]"
             if FLAG
-            else "\n[dim]< 4 GB VRAM — image splitting disabled for SmolVLM[/dim]"
+            else f"\n[dim]{_gpu_mb} VRAM — image splitting disabled for SmolVLM[/dim]"
         )
 
     console.print(Panel(
         f"[info]Model:[/info] [primary]{model_name}[/primary]   "
-        f"[info]GPU:[/info] [dim]{gpu_mb} MB[/dim]\n"
+        f"[info]GPU:[/info] [dim]{gpu_display}[/dim]\n"
         f"[dim]{video_path}[/dim]{vram_note}",
         title="[primary]Indexing Video[/primary]",
-        border_style="cyan",
+        border_style=ui.BORDER_PRIMARY,
     ))
 
-    rag = VideoRag(reset=True)
-    video_time_start = time.time()
-    if model_name.lower() == "smolvlm":
-        rag.index_video(video_path=Path(video_path), flag=FLAG)
-    elif model_name.lower() == "blip2":
-        rag.index_video_blip(video_path=Path(video_path))
-    video_time_end = time.time()
+    try:
+        with console.status("[info]Loading model...[/info]", spinner="dots"):
+            rag = VideoRag(reset=True)
+        video_time_start = time.time()
+        if model_name.lower() == "smolvlm":
+            with console.status("[info]Indexing frames with SmolVLM...[/info]", spinner="dots"):
+                rag.index_video(video_path=Path(video_path), flag=FLAG)
+        elif model_name.lower() == "blip2":
+            with console.status("[info]Indexing frames with BLIP-2...[/info]", spinner="dots"):
+                rag.index_video_blip(video_path=Path(video_path))
+        video_time_end = time.time()
+    except Exception as e:
+        console.print(Panel(
+            f"[error]{e}[/error]",
+            title="[error]Video Indexing Failed[/error]",
+            border_style=ui.BORDER_ERROR,
+        ))
+        return None
 
-    audio_time_start = time.time()
-    with console.status("[info]Transcribing audio...[/info]", spinner="dots"):
-        rag.index_audio(video_path=Path(video_path))
-    audio_time_end = time.time()
+    try:
+        audio_time_start = time.time()
+        with console.status("[info]Transcribing audio...[/info]", spinner="dots"):
+            rag.index_audio(video_path=Path(video_path))
+        audio_time_end = time.time()
+    except Exception as e:
+        console.print(Panel(
+            f"[error]{e}[/error]",
+            title="[error]Audio Transcription Failed[/error]",
+            border_style=ui.BORDER_ERROR,
+        ))
+        return None
 
     console.print(Panel(
         f"[success]Video indexed successfully.[/success]\n"
         f"[dim]Video: {video_time_end - video_time_start:.1f}s  |  "
         f"Audio: {audio_time_end - audio_time_start:.1f}s[/dim]\n\n"
         "[primary]→[/primary] [dim]Type your question at the prompt.[/dim]",
-        border_style="bright_green",
+        border_style=ui.BORDER_SUCCESS,
     ))
     _save_session(str(video_path))
     return rag
 
 
 def _do_index_llama(video_path_str: str) -> Optional[VideoRag]:
+    if not _check_prereqs("/index-llama"):
+        return None
+
+    gpu_mb = _get_gpu_mb()
+    if gpu_mb is None:
+        console.print(Panel(
+            "[warning]GPU info not available.[/warning]\n\n"
+            "[dim]Run [/dim][primary]/init[/primary][dim] first — it detects your GPU automatically.[/dim]",
+            title="[warning]Run /init First[/warning]",
+            border_style=ui.BORDER_WARNING,
+        ))
+        return None
+    if gpu_mb < 4500:
+        console.print(Panel(
+            f"[error]{'No GPU detected' if gpu_mb == 0 else f'{gpu_mb} MB VRAM is not enough'}.[/error]\n\n"
+            "[dim]Gemma 3 via llama-server requires 4 GB+ (4500 MB+) VRAM.[/dim]\n\n"
+            "[info]Use instead:[/info]\n"
+            "  [primary]/index <path> smolvlm[/primary]  — works with 4 GB VRAM\n"
+            "  [primary]/index <path> blip2[/primary]    — lightest option",
+            title="[error]Insufficient VRAM[/error]",
+            border_style=ui.BORDER_ERROR,
+        ))
+        return None
+
     if not llama_server_manager.server_bin.exists():
         console.print(Panel(
             "[error]llama-server binary not found.[/error]\n\n"
             "Run first:  [primary]/init-llama[/primary]\n\n"
             "[dim]This downloads the server binary and Gemma 3 model weights.[/dim]",
             title="[error]Missing Setup Step[/error]",
-            border_style="bright_red",
+            border_style=ui.BORDER_ERROR,
         ))
         return None
 
@@ -391,53 +626,105 @@ def _do_index_llama(video_path_str: str) -> Optional[VideoRag]:
         f"[dim]{video_path_str}[/dim]\n\n"
         "[dim]Requires 4 GB+ VRAM  ·  local Gemma 3 via llama-server[/dim]",
         title="[primary]Indexing with Local Llama-Server[/primary]",
-        border_style="cyan",
+        border_style=ui.BORDER_PRIMARY,
     ))
 
-    rag = VideoRag(reset=True)
-    video_time_start = time.time()
-    rag.index_video_llama_server(
-        video_path=Path(video_path_str),
-        server_bin=llama_server_manager.server_bin,
-        models_dir=llama_server_manager.models_dir,
-    )
-    video_time_end = time.time()
+    try:
+        with console.status("[info]Loading model...[/info]", spinner="dots"):
+            rag = VideoRag(reset=True)
+        video_time_start = time.time()
+        with console.status("[info]Indexing frames with Gemma 3 via llama-server...[/info]", spinner="dots"):
+            rag.index_video_llama_server(
+                video_path=Path(video_path_str),
+                server_bin=llama_server_manager.server_bin,
+                models_dir=llama_server_manager.models_dir,
+            )
+        video_time_end = time.time()
+    except Exception as e:
+        console.print(Panel(
+            f"[error]{e}[/error]",
+            title="[error]Video Indexing Failed[/error]",
+            border_style=ui.BORDER_ERROR,
+        ))
+        return None
 
-    audio_time_start = time.time()
-    with console.status("[info]Transcribing audio...[/info]", spinner="dots"):
-        rag.index_audio(video_path=Path(video_path_str))
-    audio_time_end = time.time()
+    try:
+        audio_time_start = time.time()
+        with console.status("[info]Transcribing audio...[/info]", spinner="dots"):
+            rag.index_audio(video_path=Path(video_path_str))
+        audio_time_end = time.time()
+    except Exception as e:
+        console.print(Panel(
+            f"[error]{e}[/error]",
+            title="[error]Audio Transcription Failed[/error]",
+            border_style=ui.BORDER_ERROR,
+        ))
+        return None
 
     console.print(Panel(
         f"[success]Video indexed successfully.[/success]\n"
         f"[dim]Video: {video_time_end - video_time_start:.1f}s  |  "
         f"Audio: {audio_time_end - audio_time_start:.1f}s[/dim]\n\n"
         "[primary]→[/primary] [dim]Type your question at the prompt.[/dim]",
-        border_style="bright_green",
+        border_style=ui.BORDER_SUCCESS,
     ))
     _save_session(video_path_str)
     return rag
 
 
 def _do_index_ollama(video_path_str: str, model_name: str) -> Optional[VideoRag]:
+    if not _check_prereqs("/index-ollama"):
+        return None
+
+    ollama_flag = _get_ollama_flag()
+    if ollama_flag is False:
+        console.print(Panel(
+            "[error]Ollama is not installed on this device.[/error]\n\n"
+            "[info]To use [/info][primary]/index-ollama[/primary][info], first install Ollama from:[/info]\n"
+            "[primary]https://ollama.com[/primary]\n\n"
+            "[dim]Then run [/dim][primary]/init[/primary][dim] again and answer [/dim][primary]yes[/primary]"
+            "[dim] when asked about Ollama.[/dim]",
+            title="[error]Ollama Not Available[/error]",
+            border_style=ui.BORDER_ERROR,
+        ))
+        return None
+
     console.print(Panel(
         f"[info]Model:[/info] [primary]{model_name}[/primary]\n"
         f"[dim]{video_path_str}[/dim]\n\n"
         "[dim]Make sure Ollama is running: [/dim][primary]ollama serve[/primary]",
         title="[primary]Indexing with Ollama[/primary]",
-        border_style="cyan",
+        border_style=ui.BORDER_PRIMARY,
     ))
 
-    rag = VideoRag(reset=True)
-    rag.index_video_ollama(video_path=Path(video_path_str), model_name=model_name)
+    try:
+        with console.status("[info]Loading model...[/info]", spinner="dots"):
+            rag = VideoRag(reset=True)
+        with console.status(f"[info]Indexing frames with {model_name}...[/info]", spinner="dots"):
+            rag.index_video_ollama(video_path=Path(video_path_str), model_name=model_name)
+    except Exception as e:
+        console.print(Panel(
+            f"[error]{e}[/error]",
+            title="[error]Ollama Error[/error]",
+            border_style=ui.BORDER_ERROR,
+        ))
+        return None
 
-    with console.status("[info]Transcribing audio...[/info]", spinner="dots"):
-        rag.index_audio(video_path=Path(video_path_str))
+    try:
+        with console.status("[info]Transcribing audio...[/info]", spinner="dots"):
+            rag.index_audio(video_path=Path(video_path_str))
+    except Exception as e:
+        console.print(Panel(
+            f"[error]{e}[/error]",
+            title="[error]Audio Transcription Failed[/error]",
+            border_style=ui.BORDER_ERROR,
+        ))
+        return None
 
     console.print(Panel(
         "[success]Video indexed successfully.[/success]\n\n"
         "[primary]→[/primary] [dim]Type your question at the prompt.[/dim]",
-        border_style="bright_green",
+        border_style=ui.BORDER_SUCCESS,
     ))
     _save_session(video_path_str)
     return rag
@@ -459,7 +746,7 @@ def _run_session() -> None:
             f"[dim]Last indexed: {_last_video}[/dim]\n\n"
             "[primary]→[/primary] [dim]Type your question to continue, or /help for commands.[/dim]",
             title="[primary]gUrrT Session[/primary]",
-            border_style="cyan",
+            border_style=ui.BORDER_PRIMARY,
         ))
     else:
         console.print(Panel(
@@ -475,28 +762,20 @@ def _run_session() -> None:
             "  /exit                          end session"
             "[/dim]",
             title="[primary]gUrrT Session[/primary]",
-            border_style="cyan",
+            border_style=ui.BORDER_PRIMARY,
         ))
 
     _pt_session: PromptSession = PromptSession(
         completer=_SlashCompleter(),
         complete_while_typing=True,
         history=InMemoryHistory(),
-        style=_pt_style,
+        style=ui.pt_style,
+        lexer=ui.SlashCommandLexer(),
     )
 
     while True:
-        prompt_tokens = FormattedText([
-            ("", "\n"),
-            ("class:prompt-name", "gurrt"),
-            ("", " "),
-            ("class:prompt-dot-on" if _indexed else "class:prompt-dot-off", "●" if _indexed else "○"),
-            ("", " "),
-            ("class:prompt-arrow", "❯"),
-            ("", " "),
-        ])
         try:
-            raw = _pt_session.prompt(prompt_tokens)
+            raw = _pt_session.prompt(ui.get_prompt_tokens(_indexed))
         except (KeyboardInterrupt, EOFError):
             console.print()
             ui.info("Goodbye.")
@@ -520,7 +799,7 @@ def _run_session() -> None:
             console.print(Panel(
                 Markdown(response),
                 title="[primary]Answer[/primary]",
-                border_style="cyan",
+                border_style=ui.BORDER_PRIMARY,
             ))
             continue
 
@@ -555,12 +834,12 @@ def _run_session() -> None:
                     "  [primary]smolvlm[/primary]  — best quality, 4 GB+ VRAM\n"
                     "  [primary]blip2[/primary]    — lighter, lower VRAM\n\n"
                     "[dim]Example: /index lecture.mp4 smolvlm[/dim]",
-                    border_style="bright_red",
+                    border_style=ui.BORDER_ERROR,
                 ))
                 continue
             result = _do_index(Path(tokens[0]), tokens[1])
             if result is not None:
-                _rag, _indexed = result, True
+                _rag, _indexed, _last_video = result, True, tokens[0]
 
         elif cmd == "index-llama":
             if not rest:
@@ -568,12 +847,12 @@ def _run_session() -> None:
                     "[error]Missing video path.[/error]\n\n"
                     "Usage:  [primary]/index-llama <video_path>[/primary]\n\n"
                     "[dim]Example: /index-llama lecture.mp4[/dim]",
-                    border_style="bright_red",
+                    border_style=ui.BORDER_ERROR,
                 ))
                 continue
             result = _do_index_llama(rest)
             if result is not None:
-                _rag, _indexed = result, True
+                _rag, _indexed, _last_video = result, True, rest
 
         elif cmd == "index-ollama":
             tokens = rest.rsplit(maxsplit=1)
@@ -582,12 +861,40 @@ def _run_session() -> None:
                     "[error]Missing arguments.[/error]\n\n"
                     "Usage:  [primary]/index-ollama <video_path> <model_name>[/primary]\n\n"
                     "[dim]Example: /index-ollama lecture.mp4 llava[/dim]",
-                    border_style="bright_red",
+                    border_style=ui.BORDER_ERROR,
                 ))
                 continue
             result = _do_index_ollama(tokens[0], tokens[1])
             if result is not None:
-                _rag, _indexed = result, True
+                _rag, _indexed, _last_video = result, True, tokens[0]
+
+        elif cmd == "clear":
+            os.system("cls" if os.name == "nt" else "clear")
+            ui.show_banner()
+            if _indexed:
+                console.print(Panel(
+                    f"[success]Session active.[/success]\n"
+                    f"[dim]Indexed: {_last_video}[/dim]\n\n"
+                    "[primary]→[/primary] [dim]Type your question to continue, or /help for commands.[/dim]",
+                    title="[primary]gUrrT Session[/primary]",
+                    border_style=ui.BORDER_PRIMARY,
+                ))
+            else:
+                console.print(Panel(
+                    "[info]Type a question to ask about your video, or use a slash command.[/info]\n\n"
+                    "[dim]"
+                    "  /help                          show commands & VRAM guide\n"
+                    "  /init                          save API keys\n"
+                    "  /init-llama                    download Gemma 3 + server binary\n"
+                    "  /models-download               download all AI models\n"
+                    "  /index <path> <model>          index with smolvlm or blip2\n"
+                    "  /index-llama <path>            index with local Gemma 3  (needs /init-llama)\n"
+                    "  /index-ollama <path> <model>   index with an Ollama model\n"
+                    "  /exit                          end session"
+                    "[/dim]",
+                    title="[primary]gUrrT Session[/primary]",
+                    border_style=ui.BORDER_PRIMARY,
+                ))
 
         elif cmd == "ask":
             if not _indexed or _rag is None:
@@ -605,7 +912,7 @@ def _run_session() -> None:
             console.print(Panel(
                 Markdown(response),
                 title="[primary]Answer[/primary]",
-                border_style="cyan",
+                border_style=ui.BORDER_PRIMARY,
             ))
 
         else:
@@ -619,6 +926,8 @@ def _run_session() -> None:
 
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        os.system("cls" if os.name == "nt" else "clear")
     ui.show_banner()
     if ctx.invoked_subcommand is None:
         _run_session()
@@ -743,7 +1052,7 @@ def ask():
         "[dim]Type [/dim][primary]exit[/primary][dim] or press "
         "[/dim][primary]Ctrl+C[/primary][dim] to end the session.[/dim]",
         title="[primary]Interactive Q&A[/primary]",
-        border_style="cyan",
+        border_style=ui.BORDER_PRIMARY,
     ))
     while True:
         try:
@@ -763,7 +1072,7 @@ def ask():
         console.print(Panel(
             Markdown(response),
             title="[success]Answer[/success]",
-            border_style="bright_green",
+            border_style=ui.BORDER_SUCCESS,
         ))
 
 

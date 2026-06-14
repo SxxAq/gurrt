@@ -5,16 +5,111 @@ from rich.text import Text
 from rich.progress import (
     Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 )
+from prompt_toolkit.styles import Style as PromptStyle
+from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.lexers import Lexer
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COLOR PALETTE — edit here to retheme the entire CLI
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Rich color names — used in theme tokens, panel borders, rules, progress bars
+C_ACCENT   = "bright_cyan"   # primary accent: headings, borders, prompt arrow
+C_SUCCESS  = "bright_green"  # success messages and borders
+C_ERROR    = "bright_red"    # error messages and borders
+C_WARNING  = "yellow"        # warnings
+C_DIM      = "dim"           # muted / secondary text
+
+# Panel / table / rule border colors
+BORDER_PRIMARY = "cyan"       # informational panels (darker shade of C_ACCENT)
+BORDER_SUCCESS = C_SUCCESS    # success panels
+BORDER_ERROR   = C_ERROR      # error panels
+BORDER_WARNING = C_WARNING    # warning panels
+
+# Table header style
+STYLE_HEADER = f"bold {C_ACCENT}"
+
+# ── Prompt-toolkit REPL colors ────────────────────────────────────────────────
+# ANSI names or #rrggbb hex — controls the interactive prompt and slash-command
+# completion popup that appears when the user types "/"
+_PT_PROMPT_COLOR  = "ansicyan"   # "gurrt" name in the prompt line
+_PT_ARROW_COLOR   = "ansicyan"   # "❯" arrow
+_PT_DOT_ON        = "ansigreen"  # ● indicator when a video is indexed
+_PT_DOT_OFF       = "ansigray"   # ○ indicator when nothing is indexed
+_PT_POPUP_BG      = "#0d1b2a"    # completion popup background
+_PT_POPUP_SEL_BG  = "#006080"    # selected entry background
+_PT_POPUP_FG      = "#a0b4c8"    # unselected entry foreground
+_PT_POPUP_SEL_FG  = "#ffffff"    # selected entry foreground
+_PT_META_FG       = "#506070"    # meta / description text (unselected)
+_PT_META_SEL_FG   = "#90c0d0"    # meta / description text (selected)
+_PT_SCROLLBAR_BG  = "#0d1b2a"    # scrollbar track
+_PT_SCROLLBAR_BTN = "#004060"    # scrollbar button
+_PT_CMD_COLOR     = "ansicyan"   # /command text in the input line (bold makes it pop)
+_PT_ARGS_COLOR    = "ansiwhite"  # arguments typed after the command
+
+# ══════════════════════════════════════════════════════════════════════════════
 
 _theme = Theme({
-    "primary": "bold bright_cyan",
-    "success": "bright_green",
-    "error": "bold bright_red",
-    "warning": "yellow",
-    "info": "dim",
+    "primary": f"bold {C_ACCENT}",
+    "success": C_SUCCESS,
+    "error":   f"bold {C_ERROR}",
+    "warning": C_WARNING,
+    "info":    C_DIM,
 })
 
 console = Console(theme=_theme)
+
+pt_style = PromptStyle.from_dict({
+    "prompt-name":    f"bold {_PT_PROMPT_COLOR}",
+    "prompt-dot-on":  f"bold {_PT_DOT_ON}",
+    "prompt-dot-off": _PT_DOT_OFF,
+    "prompt-arrow":   f"bold {_PT_ARROW_COLOR}",
+    # completion popup
+    "completion-menu.completion":              f"bg:{_PT_POPUP_BG} fg:{_PT_POPUP_FG}",
+    "completion-menu.completion.current":      f"bg:{_PT_POPUP_SEL_BG} fg:{_PT_POPUP_SEL_FG} bold",
+    "completion-menu.meta.completion":         f"bg:{_PT_POPUP_BG} fg:{_PT_META_FG}",
+    "completion-menu.meta.completion.current": f"bg:{_PT_POPUP_SEL_BG} fg:{_PT_META_SEL_FG}",
+    "scrollbar.background": f"bg:{_PT_SCROLLBAR_BG}",
+    "scrollbar.button":     f"bg:{_PT_SCROLLBAR_BTN}",
+    # input text highlighting (via SlashCommandLexer)
+    "slash-cmd":  f"bold {_PT_CMD_COLOR}",
+    "slash-args": _PT_ARGS_COLOR,
+})
+
+
+class SlashCommandLexer(Lexer):
+    """Highlights /command text in the REPL input line as the user types."""
+
+    def lex_document(self, document):
+        lines = document.lines
+
+        def get_line(lineno: int):
+            line = lines[lineno]
+            if not line.startswith("/"):
+                return [("", line)]
+            idx = line.find(" ")
+            if idx == -1:
+                return [("class:slash-cmd", line)]
+            return [
+                ("class:slash-cmd",  line[:idx]),
+                ("class:slash-args", line[idx:]),
+            ]
+
+        return get_line
+
+
+def get_prompt_tokens(indexed: bool) -> FormattedText:
+    """Return the styled REPL prompt tokens for prompt_toolkit."""
+    return FormattedText([
+        ("", "\n"),
+        ("class:prompt-name", "gUrrT"),
+        ("", " "),
+        ("class:prompt-dot-on" if indexed else "class:prompt-dot-off", "●" if indexed else "○"),
+        ("", " "),
+        ("class:prompt-arrow", "❯"),
+        ("", " "),
+    ])
+
 
 _BANNER = r"""
  ██████╗ ██╗   ██╗██████╗ ██████╗ ████████╗
@@ -27,11 +122,9 @@ _BANNER = r"""
 
 
 def show_banner() -> None:
-    console.print(Text(_BANNER, style="bold bright_cyan"))
-    console.print(
-        Text("  gUrrT · Video RAG CLI", style="dim cyan"),
-    )
-    console.print(Rule(style="cyan"))
+    console.print(Text(_BANNER, style=f"bold {C_ACCENT}"))
+    console.print(Text("  gUrrT · Video RAG CLI", style=f"dim {BORDER_PRIMARY}"))
+    console.print(Rule(style=BORDER_PRIMARY))
 
 
 def info(msg: str) -> None:
@@ -56,9 +149,9 @@ def step(msg: str) -> None:
 
 def make_progress() -> Progress:
     return Progress(
-        SpinnerColumn(style="cyan"),
+        SpinnerColumn(style=BORDER_PRIMARY),
         TextColumn("[progress.description]{task.description}"),
-        BarColumn(bar_width=None, style="cyan", complete_style="bright_cyan"),
+        BarColumn(bar_width=None, style=BORDER_PRIMARY, complete_style=C_ACCENT),
         TextColumn("[dim]{task.percentage:>3.0f}%[/dim]"),
         TimeElapsedColumn(),
         console=console,
