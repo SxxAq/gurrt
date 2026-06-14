@@ -185,10 +185,13 @@ def generate_caption(frame,buffer, model: str):
 
     {
         'role': 'user',
-        'content': 'What is in this image? .',
+        'content': '',
         'images': [img_bytes],
     }
     ],
+    options={
+            "num_predict": 200  
+        }
     )
     return response.message.content
 
