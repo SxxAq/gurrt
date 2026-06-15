@@ -23,24 +23,24 @@ Or someone smarter who already watched the whole thing.
 ## Why Existing Solutions Fall Short
 
 Large Video Language Models (LVLMs) are the current standard for video understanding but they require **16 GB of VRAM at minimum**, with the most capable ones demanding up to
-**80 GB**, running on enterprise A100s and H100s.[^1]
+**80 GB**, running on enterprise A100s and H100s.**[1]**
 
 Open Source LVLMs that run locally process **64–256 frames total** at 1 FPS, that is
-roughly **1 to 4 minutes** of video.[^2] A 1 hour or even a 30 minute lecture is out of reach. Even with
+roughly **1 to 4 minutes** of video.**[2]** A 1 hour or even a 30 minute lecture is out of reach. Even with
 4 bit quantization, a 7B video model needs 6–8 GB just to load ruling out 4 GB hardware entirely.
 
 Cloud models like Gemini handle up to 1 hour of video, but run on Google's
 infrastructure your video leaves your machine, you depend on internet access,
-and you pay per token.[^3]
+and you pay per token.**[3]**
 
 Smaller video LLMs at the 4 to 8 GB range exist but share the same root problem as
 the large ones: **uniform frame sampling**. At 1 FPS, a 30min lecture becomes
 1,800+ frames the same static slide captured hundreds of times, feeding the LLM
 redundant, noisy context regardless of model size.
 
-- > [^1]: Qwen2-VL 7B requires ~16 GB at fp16; InternVL2-40B and 72B-class models require 80 GB+
-- > [^2]: LLaVA-Video processes 64 frames by default; Qwen2-VL supports up to 256 frames
-- > [^3]: Gemini 3 supports video only up to 1 hour with duration limits
+> **[1]** Qwen2-VL 7B requires ~16 GB at fp16; InternVL2-40B and 72B-class models require 80 GB+
+> **[2]** LLaVA-Video processes 64 frames by default; Qwen2-VL supports up to 256 frames
+> **[3]** Gemini 3 supports video only up to 1 hour with duration limits
 
 ## Where gUrrT Comes In
 
@@ -74,7 +74,7 @@ Video
  ├── Frame Extraction (The Eyes)
  │     Adaptive sampling — only frames where content meaningfully changed
  │     ↓ Captioning model generates descriptions
- │     ↓ CLIP embeds each caption
+ │     ↓ CLIP embeds each frames
  │     ↓ Stored in ChromaDB
  │
  ├── Audio Pipeline (The Ears)
@@ -91,7 +91,7 @@ Video
 
 
 
-The quality of gUrrT's answers depends entirely on the quality of the context it builds as established [above](#where-gurrt-comes-in). v1 built bad context. v2 builds the right context, faster, with better models.
+The quality of gUrrT's answers depends entirely on the quality of the context it builds as established above. v1 built bad context. v2 builds the right context, faster, with better models.
 
 **v1 had two distinct failure modes:**
 
@@ -211,8 +211,6 @@ autocomplete. Previous sessions resume automatically.
 Type your question directly at the prompt (no slash) to query the indexed video.
 Answers are grounded in the audio transcript and frame captions from your specific video.
 
----
-
 ## Requirements
 
 - Python 3.12
@@ -231,7 +229,7 @@ gurrt/
     │   ├── main.py            # CLI entry point and REPL
     │   └── ui.py              # All color constants, panels, Rich components
     ├── config/
-    │   └── config.py          # API keys, model paths, session state
+    │   └── config.py          # model paths, config path
     ├── core/
     │   ├── asr.py             # Audio extraction + Whisper transcription
     │   ├── embedding.py       # Captioning + CLIP embedding per backend
@@ -245,8 +243,9 @@ gurrt/
         └── utils.py           # Temporal persistence filter, audio pipeline
 ```
 
-#### Contributions are welcome! Please follow these steps:
+## Contributions
 
+Contributions are welcome! Please follow these steps:
 1. **Fork** the repository
 2. **Create a feature branch**: `git checkout -b feature/your-feature-name`
 3. **Commit your changes**: `git commit -m "feat: describe your change"`
